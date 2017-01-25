@@ -1,0 +1,108 @@
+(load "compiler.scm")
+
+(define compile-scheme-file
+  (lambda (source target)
+      ;(map (lambda (x) (annotate-tc (pe->lex-pe (box-set (remove-applic-lambda-nil (eliminate-nested-defines (parse x))))))) (string->sexpr (string->list (file->string source))))
+      (string-append prologue (code-gen (file->string source)) epilogue)
+      ))
+
+(define string->sexpr
+    (lambda(str)
+      (<Sexpr> str (lambda(match un-match) 
+                           (if (null? un-match) 
+                             (list match) 
+                             (cons match (string->sexpr un-match)))) 
+               (lambda(x) `(failed ,x)))
+    ))
+
+(define parse-const-table
+  (lambda(exp)
+    (disp exp)
+      (cond ((equal? (car exp) 'const) (cadr exp))
+            ((equal? (car exp) 'if3) (list (parse-const-table (get-if-test exp)) (parse-const-table (get-if-dit exp)) (parse-const-table (get-if-dif exp))))
+            ((equal? (car exp) 'or) (map parse-const-table (list(get-or-body exp))))
+            ((equal? (car exp) 'seq) (map parse-const-table (get-seq-body exp)))
+            ((equal? (car exp) 'set) (parse-const-table (get-set-val exp)))
+            ((equal? (car exp) 'def) (parse-const-table (get-def-val exp)))
+            ((equal? (car exp) 'applic) (list (parse-const-table (get-applic-operator exp)) (map parse-const-table (get-applic-operands exp))))
+            ((or (equal? (car exp) 'lambda-var) (equal? (car exp) 'lambda-opt) (equal? (car exp) 'lambda-simple)) (map parse-const-table (list (get-lambda-body exp))))
+            (else '()))
+      ))
+
+(define create-const-table
+  (lambda (lst-of-exps)
+    (flatten (map parse-const-table lst-of-exps))
+    ))
+
+(define flatten
+ (lambda (lst)
+  (cond ((null? lst) '())
+   ((pair? (car lst))
+    (append (flatten (car lst))
+     (flatten (cdr lst))))
+   (else (cons (car lst) (flatten (cdr lst)))))))
+
+(define prologue
+   "
+    #include <stdio.h>
+    #include <stdlib.h>
+    
+    /* change to 0 for no debug info to be printed: */
+    #define DO_SHOW 1
+    
+    #include \"cisc.h\"
+    
+    int main()
+    {
+      START_MACHINE;
+    
+      JUMP(CONTINUE);
+    
+    #include \"char.lib\"
+    #include \"io.lib\"
+    #include \"math.lib\"
+    #include \"string.lib\"
+    #include \"system.lib\"
+    "
+)
+
+(define epilogue
+    "STOP_MACHINE;
+
+    return 0;
+    }"
+)
+
+(define code-gen
+  (lambda (x)
+    "this is code gen"
+  ))
+
+;(define string->file
+;  (lambda (file_name str)
+;    (let ((out-port (open-output-file file_name)))
+;      (write-char str out-port)
+;      (close-output-port out-port)
+;      )))
+
+
+          
+          
+
+(define file->string
+  (lambda (in-file)
+    (let ((in-port (open-input-file in-file)))
+      (letrec ((run
+                 (lambda ()
+                   (let ((ch (read-char in-port)))
+                     (if (eof-object? ch)
+                       (begin
+                         (close-input-port in-port)
+                         '())
+                       (cons ch (run)))))))
+        (list->string
+          (run))))))
+
+
+
+
