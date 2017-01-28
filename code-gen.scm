@@ -14,10 +14,6 @@
 ))      
   
 
-; (code-gen-str (apply string-append pe-lst)))
-;(string->file (string-append prologue code-gen-str epilogue) target)  
-;(string-append prologue (code-gen (file->string source)) epilogue)
-
 
 (define string->sexpr
     (lambda(str)
@@ -44,19 +40,19 @@
       START_MACHINE;
     
       JUMP(CONTINUE);
-
- 	 #define SOB_VOID 1
-	 #define SOB_NIL 2
-	 #define SOB_FALSE 3
-	 #define SOB_TRUE 5
-   
+  
     #include \"char.lib\"
     #include \"io.lib\"
     #include \"math.lib\"
     #include \"string.lib\"
     #include \"system.lib\"
 
-    "
+    #define SOB_VOID 1
+	#define SOB_NIL 2
+	#define SOB_FALSE 3
+	#define SOB_TRUE 5
+
+    CONTINUE:\n"
 )
 
 (define epilogue
@@ -103,6 +99,68 @@
                        (cons ch (run)))))))
         (list->string
           (run))))))
+
+
+(define find-consts-in-pe
+	(lambda (pe)
+		(cond ((const-expr? pe) pe)
+			  ((if-expr? pe) `(,(find-consts-in-pe (get-if-test pe)) ,(find-consts-in-pe (get-if-dit pe)) 
+			  	             ,(find-consts-in-pe (get-if-dif pe))))      
+	          ((applic-expr? pe) `(,(find-consts-in-pe (get-applic-operator pe)) 
+	          	                ,@(map find-consts-in-pe (get-applic-operands pe))))
+	          ((tc-applic-expr? pe) `(,(find-consts-in-pe (get-applic-operator pe)) 
+	          	                   ,@(map find-consts-in-pe (get-applic-operands pe))))
+	          ((seq-expr? pe) (map find-consts-in-pe (get-seq-list pe)))
+	          ((lambda-simple-expr? pe) (find-consts-in-pe (get-lambda-simple-body pe)))
+	          ((lambda-opt-expr? pe) (find-consts-in-pe (get-lambda-opt-body pe)))
+	          ((lambda-var-expr? pe) (find-consts-in-pe (get-lambda-var-body pe)))
+	          ((or-expr? pe) (map find-consts-in-pe (get-or-body pe)))
+	          ((define-expr? pe) `(,(find-consts-in-pe (get-def-var pe)) ,(find-consts-in-pe (get-def-val pe))))
+	          ((set-expr? pe) `(,(find-consts-in-pe (get-set-var pe)) ,(find-consts-in-pe (get-set-val pe))))
+	          (else '()))
+	)) 
+
+
+;----expression for debuging-----
+(define scheme-lst
+ `(,(parse `(if 33 44 55)) ,(parse '(lambda (a) x y (+ 3 4) '(a b c)))))
+;----expression for debuging-----
+
+(define flatten-const-list 
+  (lambda (list)
+	   (cond ((null? list) list)
+	         ((list? (car list)) (if (or (null? (car list)) (not (equal? (caar list) 'const)))
+                                        (append (flatten-const-list (car list)) (flatten-const-list (cdr list)))
+                                        (cons (car list) (flatten-const-list (cdr list)))))
+	         (else (cons (car list) (flatten-const-list (cdr list)))))))
+	          
+(define in-list?
+  (lambda (lst elem)
+    (cond ((null? lst) #f)
+          ((equal? (car lst) elem) #t)
+          (else (in-list? (cdr lst) elem)))))
+
+(define remove-from-list
+  (lambda (lst elem)
+    (cond ((null? lst) (cons elem '()))
+          ((equal? (car lst) elem) (remove-from-list (cdr lst) elem))
+          (else (cons (car lst) (remove-from-list (cdr lst) elem))))))
+
+
+(define remove-double
+   (lambda (c-lst)
+     (cond ((null? c-lst) c-lst)
+           ((in-list? (cdr c-lst) (car c-lst)) (remove-double (cdr c-lst)))
+           (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
+
+
+
+(define make-const-list
+	(lambda (pe-lst)
+		(remove-double (flatten-const-list (map find-consts-in-pe pe-lst)))
+		))
+
+
 
 
 (define code-gen
