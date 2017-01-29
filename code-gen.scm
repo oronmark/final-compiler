@@ -8,7 +8,8 @@
                                           (remove-applic-lambda-nil 
                                             (eliminate-nested-defines 
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
-          (code-gen-lst (map code-gen pe-lst)))
+          (const-table (make-const-table pe-lst))
+          (code-gen-lst (map code-gen pe-lst const-table)))
       (string->file (string-append prologue (apply string-append code-gen-lst) epilogue) target)                          
   )
 ))      
@@ -16,7 +17,7 @@
 
 
 (define string->sexpr
-    (lambda(str)
+    (lambda (str)
       (<Sexpr> str (lambda(match un-match) 
                            (if (null? un-match) 
                              (list match) 
@@ -123,7 +124,10 @@
 
 ;----expression for debuging-----
 (define scheme-lst
- `(,(parse `(if 33 44 55)) ,(parse '(lambda (a) x y (+ 3 4) '(a b c)))))
+ `(,(parse `(if 33 44 55)) ,(parse '(lambda (a) x y (+ 3 4) '(a b c (x y))))))
+
+(define scheme-int
+  `(,(parse ''3)))
 ;----expression for debuging-----
 
 (define flatten-const-list 
@@ -153,13 +157,45 @@
            ((in-list? (cdr c-lst) (car c-lst)) (remove-double (cdr c-lst)))
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
+;;tags constants with type and returns a list of constant and his tagged sub-constants
+;;@param : c - the constant
+; (define find-sub-and-tag
+;   (lambda (c)
+;     (cond ((char? c) `(char ,c))
+;           ((integer? c) `(integer ,c))
+;           ((number? c) `(fraction ,c))
+;           ((string? c) `(string ,c))
+;           ((pair? c) `((pair ,c) (find-sub-and-tag (car c)) (find-sub-and-tag (cdr c))))
 
 
-(define make-const-list
+(define find-sub-and-tag
+  (lambda (c)
+    (cond ((char? c) `(,c char))
+          ((integer? c) `(,c integer 1))
+          (else `(other ,c)))))
+         
+
+(define find-sub-consts
+  (lambda (c-table)
+    (if (null? c-table)
+        c-table
+        (cons (find-sub-and-tag (get-const-val (car c-table))) (find-sub-consts (cdr c-table)))))) 
+
+
+(define make-const-table
 	(lambda (pe-lst)
-		(remove-double (flatten-const-list (map find-consts-in-pe pe-lst)))
+		(remove-double (find-sub-consts (flatten-const-list (map find-consts-in-pe pe-lst))))
+    ;(remove-double (flatten-const-list (map find-consts-in-pe pe-lst)))
 		))
 
+
+(define run
+  (lambda (expr)
+    (annotate-tc 
+      (pe->lex-pe 
+        (box-set 
+          (remove-applic-lambda-nil 
+            (eliminate-nested-defines(parse (string->sexpr (string->list expr))))))))))
 
 
 
