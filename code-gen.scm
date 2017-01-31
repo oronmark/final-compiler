@@ -9,8 +9,8 @@
                                             (eliminate-nested-defines 
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
           (const-table (make-const-table pe-lst))
-          (code-gen-lst (map code-gen pe-lst const-table)))
-      (string->file (string-append prologue (apply string-append code-gen-lst) epilogue) target)                          
+         (code-gen-lst (map (lambda (ex) (code-gen ex const-table)) pe-lst)))
+      (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)                          
   )
 ))      
   
@@ -27,6 +27,9 @@
 
 
 (define prologue
+   (lambda (c-table)
+
+(string-append
    "
     #include <stdio.h>
     #include <stdlib.h>
@@ -35,6 +38,7 @@
     #define DO_SHOW 1
     
     #include \"cisc.h\"
+    #include \"debug_macros.h\"
     
     int main()
     {
@@ -47,21 +51,46 @@
     #include \"math.lib\"
     #include \"string.lib\"
     #include \"system.lib\"
+    #include \"scheme.lib\"
+
+    CONTINUE:
 
     #define SOB_VOID 1
-	#define SOB_NIL 2
-	#define SOB_FALSE 3
-	#define SOB_TRUE 5
+	  #define SOB_NIL 2
+	  #define SOB_FALSE 3
+	  #define SOB_TRUE 5
 
-    CONTINUE:\n"
-)
+/*-------------const table-------------*/"
+
+  	(generate-const-code c-table)
+
+"/*-------------const table-------------*/\n"
+
+  
+    )))
+
+
+
+
+ 
 
 (define epilogue
-   "
-    STOP_MACHINE;
 
-    return 0;
-    }"
+  (string-append
+    "\n"
+    "PUSH(R0);\n"
+    "CALL(WRITE_SOB);\n"
+    "DROP(IMM(1));\n\n"
+
+    "CALL(NEWLINE);\n"
+
+    "STOP_MACHINE;\n\n"
+
+    "return 0;\n"
+    "}"
+
+
+    )
 )
 
 
@@ -105,7 +134,7 @@
 (define find-consts-in-pe
 	(lambda (pe)
 		(cond ((const-expr? pe) pe)
-			  ((if-expr? pe) `(,(find-consts-in-pe (get-if-test pe)) ,(find-consts-in-pe (get-if-dit pe)) 
+			      ((if-expr? pe) `(,(find-consts-in-pe (get-if-test pe)) ,(find-consts-in-pe (get-if-dit pe)) 
 			  	             ,(find-consts-in-pe (get-if-dif pe))))      
 	          ((applic-expr? pe) `(,(find-consts-in-pe (get-applic-operator pe)) 
 	          	                ,@(map find-consts-in-pe (get-applic-operands pe))))
@@ -157,34 +186,48 @@
            ((in-list? (cdr c-lst) (car c-lst)) (remove-double (cdr c-lst)))
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
-;;tags constants with type and returns a list of constant and his tagged sub-constants
-;;@param : c - the constant
-; (define find-sub-and-tag
-;   (lambda (c)
-;     (cond ((char? c) `(char ,c))
-;           ((integer? c) `(integer ,c))
-;           ((number? c) `(fraction ,c))
-;           ((string? c) `(string ,c))
-;           ((pair? c) `((pair ,c) (find-sub-and-tag (car c)) (find-sub-and-tag (cdr c))))
+(define get-c-table-elem-val
+  (lambda (expr)
+    (car expr)))
+
+(define get-c-table-elem-tag
+  (lambda (expr)
+    (cadr expr)))
+
+(define get-c-table-elem-address
+  (lambda (expr)
+    (caddr expr)))
+
+(define generate-const-code
+	(lambda (c-table)
+		(cond ((null? c-table) "")
+          ((get-c-table-elem-tag (car c-table)) (string-append 
+                                                      "\n"
+                                                      "PUSH(IMM("(number->string (get-c-table-elem-val (car c-table)))"));\n"
+                                                      "CALL(MAKE_SOB_INTEGER);\n"
+                                                      "DROP(1);\n\n"  (generate-const-code (cdr c-table))))
+          (else "this is char \n\n"))
+
+))
 
 
 (define find-sub-and-tag
-  (lambda (c)
+  (lambda (c address)
     (cond ((char? c) `(,c char))
-          ((integer? c) `(,c integer 1))
+          ((integer? c) `(,c integer ,address))
           (else `(other ,c)))))
          
 
 (define find-sub-consts
-  (lambda (c-table)
+  (lambda (c-table address)
     (if (null? c-table)
         c-table
-        (cons (find-sub-and-tag (get-const-val (car c-table))) (find-sub-consts (cdr c-table)))))) 
+        (cons (find-sub-and-tag (get-const-val (car c-table)) address) (find-sub-consts (cdr c-table) (+ address 2))))))
 
 
 (define make-const-table
 	(lambda (pe-lst)
-		(remove-double (find-sub-consts (flatten-const-list (map find-consts-in-pe pe-lst))))
+		(remove-double (find-sub-consts (flatten-const-list (map find-consts-in-pe pe-lst)) 1))
     ;(remove-double (flatten-const-list (map find-consts-in-pe pe-lst)))
 		))
 
@@ -197,15 +240,19 @@
           (remove-applic-lambda-nil 
             (eliminate-nested-defines(parse (string->sexpr (string->list expr))))))))))
 
+(define try
+  (lambda (target)
+    (compile-scheme-file "const.scm" target)))
+
 
 
 (define code-gen
-  (lambda (pe)
-    (cond ((if-expr? pe) (code-gen-if pe))
+  (lambda (pe c-table)
+    (cond ((if-expr? pe) (code-gen-if pe c-table))
           ((pvar-expr? pe) "not yet implemented\n")
           ((bvar-expr? pe) "not yet implemented\n")
           ((fvar-expr? pe) "not yet implemented\n")
-          ((const-expr? pe) "not yet implemented\n")
+          ((const-expr? pe) (code-gen-const pe c-table))
           ((applic-expr? pe) "not yet implemented\n")
           ((tc-applic-expr? pe) "not yet implemented\n")
           ((seq-expr? pe) "not yet implemented\n")
@@ -226,8 +273,23 @@
       ))
 
 
+(define get-const-address
+  (lambda (c-table const-pe)
+    (let ((first (car c-table)))
+      (if (equal? (get-c-table-elem-val first) (get-const-val const-pe))
+          (get-c-table-elem-address first)
+          (get-const-address (cdr c-table) const-pe)))
+    ))
+
+(define code-gen-const
+  (lambda (const-pe c-table)
+    (let ((const-val (get-const-val const-pe)))
+      (string-append "MOV(R0,IMM("(number->string (get-const-address c-table const-pe)) "));\n"))
+    ))
+                    
+
 (define code-gen-if
-  (lambda (if-pe)
+  (lambda (if-pe c-table)
     (let ((test (get-if-test if-pe))
           (dit (get-if-dit if-pe))
           (dif (get-if-dif if-pe))
@@ -236,13 +298,13 @@
 
       (string-append
         "\n"
-        (code-gen test)
+        (code-gen test c-table)
         "CMP(R0,IMM(SOB_FALSE));\n"
         "JUMP_EQ("dif_label");\n"
-        (code-gen dit)
+        (code-gen dit c-table)
         "JUMP_EQ("exit_label");\n"
         dif_label":\n"
-        (code-gen dif)
+        (code-gen dif c-table)
         exit_label":\n"
         )
       )
