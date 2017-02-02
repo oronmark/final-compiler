@@ -152,12 +152,37 @@
 
 
 ;----expression for debuging-----
-(define scheme-lst
- `(,(parse `(if 33 44 55)) ,(parse '(lambda (a) x y (+ 3 4) '(a b c (x y))))))
+(define lst1
+ `(,(parse `(if 33 44)) ,(parse '(lambda (a) #\a #\g (+ 3 4) '(a b c (x y))))))
 
-(define scheme-int
+(define lst2
+	`(,(parse ''(1 2 3 4))))
+
+(define lst3
+	`(,(parse '#(1 2 3 4 (a b c)))))
+
+(define lst4
   `(,(parse ''3)))
+
+(define lst5
+	`(,(parse '"abcd")))
 ;----expression for debuging-----
+
+;----helpers for debug-----
+
+(define run
+  (lambda (expr)
+    (annotate-tc 
+      (pe->lex-pe 
+        (box-set 
+          (remove-applic-lambda-nil 
+            (eliminate-nested-defines(parse (string->sexpr (string->list expr))))))))))
+
+(define try
+  (lambda (target)
+    (compile-scheme-file "const.scm" target)))
+
+;-----helpers for debug----
 
 (define flatten-const-list 
   (lambda (list)
@@ -186,17 +211,19 @@
            ((in-list? (cdr c-lst) (car c-lst)) (remove-double (cdr c-lst)))
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
+;; getters for const table element
 (define get-c-table-elem-val
   (lambda (expr)
-    (car expr)))
+    (caddr expr)))
 
 (define get-c-table-elem-tag
   (lambda (expr)
-    (cadr expr)))
+    (car expr)))
 
 (define get-c-table-elem-address
   (lambda (expr)
-    (caddr expr)))
+    (cadr expr)))
+;; getters for const table element
 
 (define generate-const-code
 	(lambda (c-table)
@@ -209,41 +236,153 @@
           (else "this is char \n\n"))
 
 ))
+        
 
-
-(define find-sub-and-tag
-  (lambda (c address)
-    (cond ((char? c) `(,c char))
-          ((integer? c) `(,c integer ,address))
-          (else `(other ,c)))))
-         
-
-(define find-sub-consts
-  (lambda (c-table address)
-    (if (null? c-table)
-        c-table
-        (cons (find-sub-and-tag (get-const-val (car c-table)) address) (find-sub-consts (cdr c-table) (+ address 2))))))
-
-
-(define make-const-table
-	(lambda (pe-lst)
-		(remove-double (find-sub-consts (flatten-const-list (map find-consts-in-pe pe-lst)) 1))
-    ;(remove-double (flatten-const-list (map find-consts-in-pe pe-lst)))
+(define break-vector
+	(lambda (const-expr)
+		(let* ((const-val (get-const-val const-expr))
+			   (vec-list (vector->list const-val)))
+		    `(,const-expr ,@(map (lambda (ex) (find-all-sub-consts-in-const-expr `(const ,ex))) vec-list)))
 		))
 
 
-(define run
-  (lambda (expr)
-    (annotate-tc 
-      (pe->lex-pe 
-        (box-set 
-          (remove-applic-lambda-nil 
-            (eliminate-nested-defines(parse (string->sexpr (string->list expr))))))))))
+(define break-pair
+	(lambda (const-expr)
+		(let ((const-val (get-const-val const-expr)))
+		    `(,const-expr
+		     (const ,(car const-val)) ,(find-all-sub-consts-in-const-expr `(const ,(car const-val)))
+		     (const ,(cdr const-val)) ,(find-all-sub-consts-in-const-expr `(const ,(cdr const-val))))
+		    )
+		))
 
-(define try
-  (lambda (target)
-    (compile-scheme-file "const.scm" target)))
+(define break-symbol
+	(lambda (const-expr)
+		(let ((const-val (get-const-val const-expr)))
+			`((const ,(symbol->string const-val)) (const ,const-val)))))
 
+(define find-all-sub-consts-in-const-expr
+	(lambda (const-expr)
+		(let ((const-val (get-const-val const-expr)))
+			(cond ((vector? const-val) (break-vector const-expr))
+			      ((pair? const-val) (break-pair const-expr))
+			      ((symbol? const-val) (break-symbol const-expr))
+			      (else const-expr))
+			)
+		))
+		      
+
+
+(define find-sub-consts
+  (lambda (c-table)
+    (if (null? c-table)
+        c-table
+        (cons (find-all-sub-consts-in-const-expr (car c-table)) (find-sub-consts (cdr c-table))))))
+
+(define remove-const-tag
+	(lambda (const-list)
+		(if (null? const-list)
+			const-list
+			(cons (get-const-val (car const-list)) (remove-const-tag (cdr const-list))))))
+
+(define remove-bool-void-nil
+  (lambda (const-list)
+    (cond ((null? const-list) const-list)
+          ((or (equal? (car const-list) *void-object*)
+               (equal? (car const-list) `(const ()))
+               (equal? (car const-list) `(const #t))
+               (equal? (car const-list) `(const #f))) (remove-bool-void-nil (cdr const-list)))
+          (else (cons (car const-list) (remove-bool-void-nil (cdr const-list)))))))
+
+
+(define is-subset-in-list
+	(lambda (sub set)
+		(cond ((null? set) #f)
+			  ((equal? sub set) #t)
+			  (else (is-subset-in-list sub (cdr set))))
+		))
+
+(define is-subset-in-vector
+	(lambda (sub set)
+		(is-subset-in-list sub (vector->list set))
+		))
+
+(define is-subset?
+	(lambda (sub set)
+		(cond ((list? set) (is-subset-in-list sub set))
+			  ((vector? set) (is-subset-in-vector sub set))
+			  (else #t))
+		))
+
+(define sort-func 
+	(lambda (c1 c2)
+		(cond ((and (string? c1) (symbol? c2)) #t)
+			  ((and (symbol? c1) (string? c2)) #f)
+			  (else (if (is-subset? c1 c2)
+					 	c1
+					 	c2)))))
+
+(define topologica-sort
+	(lambda (const-lst)
+		(sort sort-func const-lst)))
+
+(define tag-integer
+	(lambda (c address)
+		`(integer ,address ,c)))
+
+(define tag-char
+	(lambda (c address)
+		`(char  ,address ,c)))
+
+(define tag-string
+	(lambda (c address)
+		`(string ,address ,(string-length c) ,@(map char->integer (string->list c)))))
+
+
+; (define tag-symbol
+; 	(lambda (c const-table adress)
+; 		(let ((symbol-string (symbol->string)))
+
+
+(define get-const-address
+  (lambda (c-table const-pe)
+    (let ((first (car c-table)))
+      (if (equal? (get-c-table-elem-val first) (get-const-val const-pe))
+          (get-c-table-elem-address first)
+          (get-const-address (cdr c-table) const-pe)))
+    ))
+
+
+;;returns a list of tupels (tag address value)
+(define assign-tag-and-address
+	(lambda (const-list tagged-list address)
+		(if (null? tagged-list) 
+			tagged-list
+			(let ((first (car tagged-list)))
+			    (cond ((integer? first) (cons (tag-integer first address) 
+			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
+			    	                          	                                 (+ address 2))))
+			          ((char? first) (cons (tag-char first address) 
+			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
+			    	                          	                                 (+ address 2))))
+			          ((string? first) (cons (tag-string first address) 
+			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
+			    	                          	                                 (+ address (string-length first) 2))))
+			    	  (else (cons first (assign-tag-and-address const-list (cdr tagged-list) address))))
+			    ))))
+
+
+;;all-const-list is a list of all the constants in the input file /w sub constants
+(define make-const-table
+	(lambda (pe-lst)
+	  (let ((all-const-list (topologica-sort
+		  					   (remove-const-tag 
+	  	                          (remove-bool-void-nil (remove-double 
+		                    	  	(flatten-const-list 
+		                    	  		(remove-double 
+		                    	  			(find-sub-consts 
+		                    	  				(flatten-const-list (map find-consts-in-pe pe-lst)))))))))))
+	     (assign-tag-and-address all-const-list all-const-list 7))
+		))
 
 
 (define code-gen
@@ -273,14 +412,6 @@
       ))
 
 
-(define get-const-address
-  (lambda (c-table const-pe)
-    (let ((first (car c-table)))
-      (if (equal? (get-c-table-elem-val first) (get-const-val const-pe))
-          (get-c-table-elem-address first)
-          (get-const-address (cdr c-table) const-pe)))
-    ))
-
 (define code-gen-const
   (lambda (const-pe c-table)
     (let ((const-val (get-const-val const-pe)))
@@ -309,4 +440,5 @@
         )
       )
   ))
+
 
