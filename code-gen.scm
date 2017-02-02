@@ -10,7 +10,8 @@
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
           (const-table (make-const-table pe-lst))
          (code-gen-lst (map (lambda (ex) (code-gen ex const-table)) pe-lst)))
-      (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)                          
+
+       (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)                       
   )
 ))      
   
@@ -60,11 +61,11 @@
 	  #define SOB_FALSE 3
 	  #define SOB_TRUE 5
 
-/*-------------const table-------------*/"
+/*-------------const table-------------*/\n"
 
   	(generate-const-code c-table)
 
-"/*-------------const table-------------*/\n"
+"/*-------------const table-------------*/\n\n"
 
   
     )))
@@ -162,7 +163,7 @@
 	`(,(parse '#(1 2 3 4 (a b c)))))
 
 (define lst4
-  `(,(parse ''3)))
+  `(,(parse ''abc)))
 
 (define lst5
 	`(,(parse '"abcd")))
@@ -211,10 +212,14 @@
            ((in-list? (cdr c-lst) (car c-lst)) (remove-double (cdr c-lst)))
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
-;; getters for const table element
+;-------- getters for const table element --------
 (define get-c-table-elem-val
   (lambda (expr)
     (caddr expr)))
+
+(define get-c-table-string-rep
+	(lambda (expr)
+		(cadddr expr)))
 
 (define get-c-table-elem-tag
   (lambda (expr)
@@ -223,17 +228,53 @@
 (define get-c-table-elem-address
   (lambda (expr)
     (cadr expr)))
-;; getters for const table element
+;-------- getters for const table element --------
+
+;;pushes the argument for MAKE_SOB_STRING to stack
+;;@param val : represents string in const-table, example : val = (3 (97 98 99)) , string = "abc"
+;;@param str-lst : list of ascii characters representing the string
+(define push-string
+	(lambda (val)
+		(let ((len (car val))
+			  (str-lst (cadr val)))
+		   (string-append 
+		   	   "\n"
+		   	   "PUSH(IMM("(number->string len)"));\n"
+			   (letrec  ((run-push (lambda (str-lst)
+			   					(if (null? str-lst)
+			   						""
+			   						(string-append 
+			   							"PUSH(IMM("(number->string (car str-lst))"));\n"
+			   							(run-push (cdr str-lst)))))))
+			      (run-push str-lst))))))
+		   							
+
 
 (define generate-const-code
 	(lambda (c-table)
-		(cond ((null? c-table) "")
-          ((get-c-table-elem-tag (car c-table)) (string-append 
-                                                      "\n"
-                                                      "PUSH(IMM("(number->string (get-c-table-elem-val (car c-table)))"));\n"
-                                                      "CALL(MAKE_SOB_INTEGER);\n"
-                                                      "DROP(1);\n\n"  (generate-const-code (cdr c-table))))
-          (else "this is char \n\n"))
+		(if (null? c-table)
+			""
+			(let ((first (car c-table)))
+				(cond ((equal? (get-c-table-elem-tag first) 'integer)
+								(string-append 
+	                                   "\n"
+	                                   "PUSH(IMM("(number->string (get-c-table-elem-val first))"));\n"
+	                                   "CALL(MAKE_SOB_INTEGER);\n"
+	                                   "DROP(IMM(1));\n\n"  (generate-const-code (cdr c-table))))
+				      ((equal? (get-c-table-elem-tag first) 'char)
+								(string-append 
+	                                   "\n"
+	                                   "PUSH(IMM("(number->string (get-c-table-elem-val first))"));\n"
+	                                   "CALL(MAKE_SOB_CHAR);\n"
+	                                   "DROP(IMM(1));\n\n"  (generate-const-code (cdr c-table))))
+				      ((equal? (get-c-table-elem-tag first) 'string) 
+                                          (string-append
+												(push-string (get-c-table-string-rep first))
+												 "CALL(MAKE_SOB_STRING);\n"
+          									 "DROP("(number->string (+ (string-length (get-c-table-elem-val first)) 1))");\n\n"  
+          									 (generate-const-code (cdr c-table))))
+				      (else ""))))
+
 
 ))
         
@@ -331,44 +372,46 @@
 
 (define tag-char
 	(lambda (c address)
-		`(char  ,address ,c)))
+		`(char  ,address ,(char->integer c))))
 
 (define tag-string
 	(lambda (c address)
-		`(string ,address ,(string-length c) ,@(map char->integer (string->list c)))))
+		`(string ,address ,c (,(string-length c) ,(map char->integer (string->list c))))))
 
 
-; (define tag-symbol
-; 	(lambda (c const-table adress)
-; 		(let ((symbol-string (symbol->string)))
-
-
-(define get-const-address
-  (lambda (c-table const-pe)
-    (let ((first (car c-table)))
-      (if (equal? (get-c-table-elem-val first) (get-const-val const-pe))
-          (get-c-table-elem-address first)
-          (get-const-address (cdr c-table) const-pe)))
-    ))
+(define tag-symbol
+	(lambda (c tagged-list address)
+		(let ((symbol-string (symbol->string c)))
+			`(symbol ,address ,c ,(get-const-address tagged-list  symbol-string)))))
 
 
 ;;returns a list of tupels (tag address value)
 (define assign-tag-and-address
 	(lambda (const-list tagged-list address)
-		(if (null? tagged-list) 
+		(if (null? const-list) 
 			tagged-list
-			(let ((first (car tagged-list)))
-			    (cond ((integer? first) (cons (tag-integer first address) 
-			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
-			    	                          	                                 (+ address 2))))
-			          ((char? first) (cons (tag-char first address) 
-			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
-			    	                          	                                 (+ address 2))))
-			          ((string? first) (cons (tag-string first address) 
-			    	                          (assign-tag-and-address const-list (cdr tagged-list) 
-			    	                          	                                 (+ address (string-length first) 2))))
-			    	  (else (cons first (assign-tag-and-address const-list (cdr tagged-list) address))))
+			(let ((first (car const-list)))
+			    (cond ((integer? first) (assign-tag-and-address (cdr const-list) (cons (tag-integer first address) tagged-list)
+			    															     (+ address 2)))
+			          ((char? first) (assign-tag-and-address (cdr const-list) (cons (tag-char first address) tagged-list)
+			    															     (+ address 2)))
+			          ((string? first) (assign-tag-and-address (cdr const-list) (cons (tag-string first address) tagged-list)
+			    															     (+ address (string-length first) 2)))
+			          ((symbol? first) (assign-tag-and-address (cdr const-list) (cons (tag-symbol first tagged-list address) 
+			                                                                     tagged-list) (+ address 2)))			          																   
+			    															
+			    	  (else (assign-tag-and-address (cdr const-list) tagged-list address)))
 			    ))))
+
+(define get-const-address
+  (lambda (c-table const-pe)
+  	(if (null? c-table)
+  		#f
+	    (let ((first (car c-table)))
+	      (if (equal? (get-c-table-elem-val first) const-pe)
+	          (get-c-table-elem-address first)
+	          (get-const-address (cdr c-table) const-pe))))
+    ))
 
 
 ;;all-const-list is a list of all the constants in the input file /w sub constants
@@ -381,7 +424,7 @@
 		                    	  		(remove-double 
 		                    	  			(find-sub-consts 
 		                    	  				(flatten-const-list (map find-consts-in-pe pe-lst)))))))))))
-	     (assign-tag-and-address all-const-list all-const-list 7))
+	     (assign-tag-and-address all-const-list '() 7))
 		))
 
 
@@ -415,7 +458,7 @@
 (define code-gen-const
   (lambda (const-pe c-table)
     (let ((const-val (get-const-val const-pe)))
-      (string-append "MOV(R0,IMM("(number->string (get-const-address c-table const-pe)) "));\n"))
+      (string-append "MOV(R0,IMM("(number->string (get-const-address c-table const-val)) "));\n"))
     ))
                     
 
