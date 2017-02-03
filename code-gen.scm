@@ -63,7 +63,7 @@
 
 /*-------------const table-------------*/\n"
 
-  	(generate-const-code c-table)
+  	(generate-const-in-mem (reverse c-table))
 
 "/*-------------const table-------------*/\n\n"
 
@@ -167,6 +167,9 @@
 
 (define lst5
 	`(,(parse '"abcd")))
+
+(define lst6
+	`(,(parse '#\c)))
 ;----expression for debuging-----
 
 ;----helpers for debug-----
@@ -217,6 +220,14 @@
   (lambda (expr)
     (caddr expr)))
 
+(define get-c-table-char-ascii
+	(lambda (expr)
+		(cadddr expr)))
+
+(define get-c-table-symbol-rep
+	(lambda (expr)
+		(cadddr expr)))
+
 (define get-c-table-string-rep
 	(lambda (expr)
 		(cadddr expr)))
@@ -238,20 +249,39 @@
 		(let ((len (car val))
 			  (str-lst (cadr val)))
 		   (string-append 
-		   	   "\n"
-		   	   "PUSH(IMM("(number->string len)"));\n"
+		   	   "\n"		   	   
 			   (letrec  ((run-push (lambda (str-lst)
 			   					(if (null? str-lst)
 			   						""
 			   						(string-append 
 			   							"PUSH(IMM("(number->string (car str-lst))"));\n"
 			   							(run-push (cdr str-lst)))))))
-			      (run-push str-lst))))))
+			      (run-push str-lst)) 
+			   	"PUSH(IMM("(number->string len)"));\n"
+			   ))))
 		   							
+(define generate-const-in-mem
+	(lambda (c-table)
+		(string-append
+			"\n"
+			"CALL(MAKE_SOB_VOID);\n"
+			"CALL(MAKE_SOB_NIL);\n"
+			
+			"PUSH(IMM(0));\n"
+			"CALL(MAKE_SOB_BOOL);\n"
+			"DROP(IMM(1));\n"
 
+			"PUSH(IMM(1));\n"
+			"CALL(MAKE_SOB_BOOL);\n"
+			"DROP(IMM(1));\n"
+
+			(generate-const-code c-table))
+		)
+	)
 
 (define generate-const-code
 	(lambda (c-table)
+
 		(if (null? c-table)
 			""
 			(let ((first (car c-table)))
@@ -264,7 +294,7 @@
 				      ((equal? (get-c-table-elem-tag first) 'char)
 								(string-append 
 	                                   "\n"
-	                                   "PUSH(IMM("(number->string (get-c-table-elem-val first))"));\n"
+	                                   "PUSH(IMM("(number->string (get-c-table-char-ascii first))"));\n"
 	                                   "CALL(MAKE_SOB_CHAR);\n"
 	                                   "DROP(IMM(1));\n\n"  (generate-const-code (cdr c-table))))
 				      ((equal? (get-c-table-elem-tag first) 'string) 
@@ -273,6 +303,12 @@
 												 "CALL(MAKE_SOB_STRING);\n"
           									 "DROP("(number->string (+ (string-length (get-c-table-elem-val first)) 1))");\n\n"  
           									 (generate-const-code (cdr c-table))))
+				       ((equal? (get-c-table-elem-tag first) 'symbol)
+									(string-append 
+	                                   "\n"
+	                                   "PUSH(IMM("(number->string (get-c-table-symbol-rep first))"));\n"
+	                                   "CALL(MAKE_SOB_SYMBOL);\n"
+	                                   "DROP(IMM(1));\n\n"  (generate-const-code (cdr c-table))))
 				      (else ""))))
 
 
@@ -372,7 +408,7 @@
 
 (define tag-char
 	(lambda (c address)
-		`(char  ,address ,(char->integer c))))
+		`(char  ,address ,c ,(char->integer c))))
 
 (define tag-string
 	(lambda (c address)
@@ -385,7 +421,7 @@
 			`(symbol ,address ,c ,(get-const-address tagged-list  symbol-string)))))
 
 
-;;returns a list of tupels (tag address value)
+;;returns a list of tupels (tag address explicit-value implicite-value)
 (define assign-tag-and-address
 	(lambda (const-list tagged-list address)
 		(if (null? const-list) 
@@ -403,6 +439,7 @@
 			    	  (else (assign-tag-and-address (cdr const-list) tagged-list address)))
 			    ))))
 
+;;@param const-pe : const without label
 (define get-const-address
   (lambda (c-table const-pe)
   	(if (null? c-table)
