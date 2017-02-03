@@ -157,10 +157,10 @@
  `(,(parse `(if 33 44)) ,(parse '(lambda (a) #\a #\g (+ 3 4) '(a b c (x y))))))
 
 (define lst2
-	`(,(parse ''(1 2 3 4))))
+	`(,(parse ''(1 2 3))))
 
 (define lst3
-	`(,(parse '#(1 2 3 4 (a b c)))))
+	`(,(parse '#(1 2 3 4 "abc" #\x))))
 
 (define lst4
   `(,(parse ''abc)))
@@ -232,9 +232,18 @@
 	(lambda (expr)
 		(cadddr expr)))
 
+(define get-c-table-pair-rep
+	(lambda (expr)
+		(cadddr expr)))
+
+(define get-c-table-vector-rep
+	(lambda (expr)
+		(cadddr expr)))
+
 (define get-c-table-elem-tag
   (lambda (expr)
     (car expr)))
+
 
 (define get-c-table-elem-address
   (lambda (expr)
@@ -259,6 +268,16 @@
 			      (run-push str-lst)) 
 			   	"PUSH(IMM("(number->string len)"));\n"
 			   ))))
+
+(define push-pair
+	(lambda (val)
+		(string-append			
+			"PUSH(IMM("(number->string (cadr val))"));\n"
+			"PUSH(IMM("(number->string (car val))"));\n")))
+
+(define push-vector
+	(lambda (val)
+		(push-string val)))
 		   							
 (define generate-const-in-mem
 	(lambda (c-table)
@@ -309,6 +328,19 @@
 	                                   "PUSH(IMM("(number->string (get-c-table-symbol-rep first))"));\n"
 	                                   "CALL(MAKE_SOB_SYMBOL);\n"
 	                                   "DROP(IMM(1));\n\n"  (generate-const-code (cdr c-table))))
+				       ((equal? (get-c-table-elem-tag first) 'vector) 
+                                          (string-append
+												(push-string (get-c-table-vector-rep first))
+												 "CALL(MAKE_SOB_VECTOR);\n"
+          									     "DROP("(number->string 
+          									 	  (+ (length (vector->list(get-c-table-elem-val first))) 1))");\n\n"  
+          									 (generate-const-code (cdr c-table))))
+				       ((equal? (get-c-table-elem-tag first) 'pair) 
+                                          (string-append
+												(push-pair (get-c-table-pair-rep first))
+												 "CALL(MAKE_SOB_PAIR);\n"
+          									 	   "DROP(IMM(2));\n\n" 
+          									 (generate-const-code (cdr c-table))))
 				      (else ""))))
 
 
@@ -414,11 +446,18 @@
 	(lambda (c address)
 		`(string ,address ,c (,(string-length c) ,(map char->integer (string->list c))))))
 
-
+(define tag-vector
+	(lambda (c address c-table)
+		`(vector ,address ,c (,(length(vector->list c)) ,(map (lambda (ex) (get-const-address c-table ex)) 
+																		   (vector->list c))))))
 (define tag-symbol
 	(lambda (c tagged-list address)
 		(let ((symbol-string (symbol->string c)))
 			`(symbol ,address ,c ,(get-const-address tagged-list  symbol-string)))))
+
+(define tag-pair
+	(lambda (c address c-table)
+		`(pair ,address ,c (,(get-const-address c-table (car c)) ,(get-const-address c-table (cdr c))))))
 
 
 ;;returns a list of tupels (tag address explicit-value implicite-value)
@@ -434,7 +473,13 @@
 			          ((string? first) (assign-tag-and-address (cdr const-list) (cons (tag-string first address) tagged-list)
 			    															     (+ address (string-length first) 2)))
 			          ((symbol? first) (assign-tag-and-address (cdr const-list) (cons (tag-symbol first tagged-list address) 
-			                                                                     tagged-list) (+ address 2)))			          																   
+			                                                                     tagged-list) (+ address 2)))	
+			          ((vector? first) (assign-tag-and-address (cdr const-list) (cons (tag-vector first address tagged-list) 
+			          	                                                         tagged-list)
+			    															     (+ address (length(vector->list first)) 2)))
+			    	  ((pair? first) (assign-tag-and-address (cdr const-list) (cons (tag-pair first address tagged-list) 
+			          	                                                         tagged-list)
+			    															     (+ address 3)))		          																   
 			    															
 			    	  (else (assign-tag-and-address (cdr const-list) tagged-list address)))
 			    ))))
@@ -442,12 +487,16 @@
 ;;@param const-pe : const without label
 (define get-const-address
   (lambda (c-table const-pe)
-  	(if (null? c-table)
-  		#f
-	    (let ((first (car c-table)))
-	      (if (equal? (get-c-table-elem-val first) const-pe)
-	          (get-c-table-elem-address first)
-	          (get-const-address (cdr c-table) const-pe))))
+  	(cond ((equal? `(const ,const-pe) *void-object*) 1)
+  		  ((null? const-pe) 2)
+  		  ((boolean? const-pe) (if (equal? const-pe #f) 3 5))
+	  	   (else 
+			  	(if (null? c-table)
+			  		#f
+				    (let ((first (car c-table)))
+				      (if (equal? (get-c-table-elem-val first) const-pe)
+				          (get-c-table-elem-address first)
+				          (get-const-address (cdr c-table) const-pe))))))
     ))
 
 
