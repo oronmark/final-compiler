@@ -1,0 +1,85 @@
+
+    #include <stdio.h>
+    #include <stdlib.h>
+    
+    /* change to 0 for no debug info to be printed: */
+    #define DO_SHOW 1
+    
+    #include "cisc.h"
+    #include "debug_macros.h"
+    
+    int main()
+    {
+      START_MACHINE;
+    
+      JUMP(CONTINUE);
+  
+    #include "char.lib"
+    #include "io.lib"
+    #include "math.lib"
+    #include "string.lib"
+    #include "system.lib"
+    #include "scheme.lib"
+
+    CONTINUE:
+
+    #define SOB_VOID 1
+	  #define SOB_NIL 2
+	  #define SOB_FALSE 3
+	  #define SOB_TRUE 5
+
+/*-------------const table-------------*/
+
+CALL(MAKE_SOB_VOID);
+CALL(MAKE_SOB_NIL);
+PUSH(IMM(0));
+CALL(MAKE_SOB_BOOL);
+DROP(IMM(1));
+PUSH(IMM(1));
+CALL(MAKE_SOB_BOOL);
+DROP(IMM(1));
+
+PUSH(IMM(97));
+PUSH(IMM(98));
+PUSH(IMM(99));
+PUSH(IMM(3));
+CALL(MAKE_SOB_STRING);
+DROP(4);
+
+
+PUSH(IMM(3));
+CALL(MAKE_SOB_INTEGER);
+DROP(IMM(1));
+
+
+PUSH(IMM(2));
+CALL(MAKE_SOB_INTEGER);
+DROP(IMM(1));
+
+
+PUSH(IMM(1));
+CALL(MAKE_SOB_INTEGER);
+DROP(IMM(1));
+
+
+PUSH(IMM(16));
+PUSH(IMM(14));
+PUSH(IMM(12));
+PUSH(IMM(7));
+PUSH(IMM(4));
+CALL(MAKE_SOB_VECTOR);
+DROP(5);
+
+/*-------------const table-------------*/
+
+MOV(R0,IMM(18));
+
+PUSH(R0);
+CALL(WRITE_SOB);
+DROP(IMM(1));
+INFO;
+CALL(NEWLINE);
+STOP_MACHINE;
+
+return 0;
+}
