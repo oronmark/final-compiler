@@ -169,7 +169,7 @@
 	`(,(parse '"abcd")))
 
 (define lst6
-	`(,(parse '#\c)))
+	`(,(parse -2/4)))
 ;----expression for debuging-----
 
 ;----helpers for debug-----
@@ -228,6 +228,10 @@
 	(lambda (expr)
 		(cadddr expr)))
 
+(define get-c-table-fraction-rep
+	(lambda (expr)
+		(cadddr expr)))
+
 (define get-c-table-string-rep
 	(lambda (expr)
 		(cadddr expr)))
@@ -278,6 +282,10 @@
 (define push-vector
 	(lambda (val)
 		(push-string val)))
+
+(define push-fraction
+	(lambda (val)
+		(push-pair val)))
 		   							
 (define generate-const-in-mem
 	(lambda (c-table)
@@ -339,6 +347,12 @@
                                           (string-append
 												(push-pair (get-c-table-pair-rep first))
 												 "CALL(MAKE_SOB_PAIR);\n"
+          									 	   "DROP(IMM(2));\n\n" 
+          									 (generate-const-code (cdr c-table))))
+				       ((equal? (get-c-table-elem-tag first) 'fraction) 
+                                          (string-append
+												(push-fraction (get-c-table-fraction-rep first))
+												 "CALL(MAKE_SOB_FRACTION);\n"
           									 	   "DROP(IMM(2));\n\n" 
           									 (generate-const-code (cdr c-table))))
 				      (else ""))))
@@ -438,6 +452,10 @@
 	(lambda (c address)
 		`(integer ,address ,c)))
 
+(define tag-fraction
+	(lambda (c address)
+		`(fraction ,address ,c (,(numerator c) ,(denominator c)))))
+
 (define tag-char
 	(lambda (c address)
 		`(char  ,address ,c ,(char->integer c))))
@@ -480,7 +498,11 @@
 			    	  ((pair? first) (assign-tag-and-address (cdr const-list) (cons (tag-pair first address tagged-list) 
 			          	                                                         tagged-list)
 			    															     (+ address 3)))		          																   
-			    															
+			    	  ((and (rational? first) (not (integer? first))) (assign-tag-and-address 
+			    	  	                                                         (cdr const-list) 
+			    	  	                                                         (cons (tag-fraction first address) 
+			          	                                                         tagged-list)
+			    															     (+ address 3)))														
 			    	  (else (assign-tag-and-address (cdr const-list) tagged-list address)))
 			    ))))
 
@@ -516,7 +538,7 @@
 
 (define code-gen
   (lambda (pe c-table)
-    (cond ((if-expr? pe) (code-gen-if pe c-table))
+    (cond ((if-expr? pe) "not yet implemented\n")
           ((pvar-expr? pe) "not yet implemented\n")
           ((bvar-expr? pe) "not yet implemented\n")
           ((fvar-expr? pe) "not yet implemented\n")
