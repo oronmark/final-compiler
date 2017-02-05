@@ -538,21 +538,21 @@
 
 (define code-gen
   (lambda (pe c-table)
-    (cond ((if-expr? pe) "not yet implemented\n")
+    (cond ((if-expr? pe) (code-gen-if pe c-table))
           ((pvar-expr? pe) "not yet implemented\n")
           ((bvar-expr? pe) "not yet implemented\n")
           ((fvar-expr? pe) "not yet implemented\n")
           ((const-expr? pe) (code-gen-const pe c-table))
           ((applic-expr? pe) "not yet implemented\n")
           ((tc-applic-expr? pe) "not yet implemented\n")
-          ((seq-expr? pe) "not yet implemented\n")
+          ((seq-expr? pe) (code-gen-seq pe c-table))
           ((lambda-simple-expr? pe) "not yet implemented\n")
           ((lambda-opt-expr? pe) "not yet implemented\n")
           ((lambda-var-expr? pe) "not yet implemented\n")
-          ((or-expr? pe) "not yet implemented\n")
+          ((or-expr? pe) (code-gen-or pe c-table))
           ((define-expr? pe) "not yet implemented\n")
           ((set-expr? pe) "not yet implemented\n")
-          (else "not yet implemented\n"))   
+          (else "error"))   
   ))
 
 (define label-generator
@@ -584,7 +584,7 @@
         "CMP(R0,IMM(SOB_FALSE));\n"
         "JUMP_EQ("dif_label");\n"
         (code-gen dit c-table)
-        "JUMP_EQ("exit_label");\n"
+        "JUMP("exit_label");\n"
         dif_label":\n"
         (code-gen dif c-table)
         exit_label":\n"
@@ -592,4 +592,26 @@
       )
   ))
 
+(define code-gen-seq
+	(lambda (seq-pe c-table)
+		(letrec ((run-seq (lambda (elems)
+							(if (null? elems)
+								""
+								(string-append
+									(code-gen (car elems) c-table)
+									(run-seq (cdr elems)))))))
+		   (run-seq (get-seq-list seq-pe)))))
+
+(define code-gen-or
+	(lambda (or-pe c-table)
+		(letrec ((exit-label (label-generator "_exit_or_"))
+			     (run-or (lambda (args)
+					(if (null? args)
+						""
+						(string-append
+							(code-gen (car args) c-table)
+							"CMP(R0,IMM(SOB_FALSE));\n"
+							"JUMP_NE("exit-label");\n"
+							(run-or (cdr args)))))))
+			(string-append "MOV(R0,IMM(SOB_FALSE));\n" (run-or (get-or-body or-pe)) exit-label ":\n"))))
 

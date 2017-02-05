@@ -1,2 +1,1 @@
-(if 1 2 3)
-(or 'a 'b 'c #f)
+(begin 1 2 #f 'ab "abc")
