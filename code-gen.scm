@@ -1,3 +1,5 @@
+;; very importent : when finishing the assignment, remove CALL(NEWLINE) from epilogue
+
 (load "compiler.scm")
 
 (define compile-scheme-file
@@ -9,7 +11,7 @@
                                             (eliminate-nested-defines 
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
           (const-table (make-const-table pe-lst))
-         (code-gen-lst (map (lambda (ex) (code-gen ex const-table)) pe-lst)))
+         (code-gen-lst (map (lambda (ex) (code-gen ex const-table 0)) pe-lst)))
 
        (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)                       
   )
@@ -67,6 +69,15 @@
 
 "/*-------------const table-------------*/\n\n"
 
+"/*-------------fake frame--------------*/\n\n"
+	"PUSH(IMM(0));\n"
+	"PUSH(IMM(T_NIL));\n"
+	"PUSH(LABEL(END));\n"
+	"PUSH(FP);\n"
+	"MOV(FP,SP);\n\n"
+
+"/*-------------fake frame--------------*/\n\n"
+
   
     )))
 
@@ -84,6 +95,8 @@
     "DROP(IMM(1));\n\n"
 
     "CALL(NEWLINE);\n"
+
+    "END:\n"
 
     "STOP_MACHINE;\n\n"
 
@@ -180,11 +193,11 @@
       (pe->lex-pe 
         (box-set 
           (remove-applic-lambda-nil 
-            (eliminate-nested-defines(parse (string->sexpr (string->list expr))))))))))
+            (eliminate-nested-defines(parse expr))))))))
 
 (define try
   (lambda (target)
-    (compile-scheme-file "const.scm" target)))
+    (compile-scheme-file "program.scm" target)))
 
 ;-----helpers for debug----
 
@@ -216,6 +229,15 @@
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
 ;-------- getters for const table element --------
+
+(define get-pvar-var
+	(lambda (pvar-expr)
+		(cadr pvar-expr)))
+
+(define get-pvar-minor
+	(lambda (pvar-expr)
+		(caddr pvar-expr)))
+
 (define get-c-table-elem-val
   (lambda (expr)
     (caddr expr)))
@@ -537,19 +559,19 @@
 
 
 (define code-gen
-  (lambda (pe c-table)
-    (cond ((if-expr? pe) (code-gen-if pe c-table))
+  (lambda (pe c-table env)
+    (cond ((if-expr? pe) (code-gen-if pe c-table env))
           ((pvar-expr? pe) "not yet implemented\n")
           ((bvar-expr? pe) "not yet implemented\n")
           ((fvar-expr? pe) "not yet implemented\n")
-          ((const-expr? pe) (code-gen-const pe c-table))
+          ((const-expr? pe) (code-gen-const pe c-table env))
           ((applic-expr? pe) "not yet implemented\n")
           ((tc-applic-expr? pe) "not yet implemented\n")
-          ((seq-expr? pe) (code-gen-seq pe c-table))
+          ((seq-expr? pe) (code-gen-seq pe c-table env))
           ((lambda-simple-expr? pe) "not yet implemented\n")
           ((lambda-opt-expr? pe) "not yet implemented\n")
           ((lambda-var-expr? pe) "not yet implemented\n")
-          ((or-expr? pe) (code-gen-or pe c-table))
+          ((or-expr? pe) (code-gen-or pe c-table env))
           ((define-expr? pe) "not yet implemented\n")
           ((set-expr? pe) "not yet implemented\n")
           (else "error"))   
@@ -564,14 +586,14 @@
 
 
 (define code-gen-const
-  (lambda (const-pe c-table)
+  (lambda (const-pe c-table env)
     (let ((const-val (get-const-val const-pe)))
       (string-append "MOV(R0,IMM("(number->string (get-const-address c-table const-val)) "));\n"))
     ))
                     
 
 (define code-gen-if
-  (lambda (if-pe c-table)
+  (lambda (if-pe c-table env)
     (let ((test (get-if-test if-pe))
           (dit (get-if-dit if-pe))
           (dif (get-if-dif if-pe))
@@ -580,38 +602,97 @@
 
       (string-append
         "\n"
-        (code-gen test c-table)
+        (code-gen test c-table env)
         "CMP(R0,IMM(SOB_FALSE));\n"
         "JUMP_EQ("dif_label");\n"
-        (code-gen dit c-table)
+        (code-gen dit c-table env)
         "JUMP("exit_label");\n"
         dif_label":\n"
-        (code-gen dif c-table)
+        (code-gen dif c-table env)
         exit_label":\n"
         )
       )
   ))
 
 (define code-gen-seq
-	(lambda (seq-pe c-table)
+	(lambda (seq-pe c-table env)
 		(letrec ((run-seq (lambda (elems)
 							(if (null? elems)
 								""
 								(string-append
-									(code-gen (car elems) c-table)
+									(code-gen (car elems) c-table env)
 									(run-seq (cdr elems)))))))
 		   (run-seq (get-seq-list seq-pe)))))
 
 (define code-gen-or
-	(lambda (or-pe c-table)
+	(lambda (or-pe c-table env)
 		(letrec ((exit-label (label-generator "_exit_or_"))
 			     (run-or (lambda (args)
 					(if (null? args)
 						""
 						(string-append
-							(code-gen (car args) c-table)
+							(code-gen (car args) c-table env)
 							"CMP(R0,IMM(SOB_FALSE));\n"
 							"JUMP_NE("exit-label");\n"
 							(run-or (cdr args)))))))
 			(string-append "MOV(R0,IMM(SOB_FALSE));\n" (run-or (get-or-body or-pe)) exit-label ":\n"))))
 
+
+(define code-gen-lambda-simple
+	(lambda (lambda-pe c-table env)
+		(let ((body-code (code-gen (get-lambda-simple-body) c-table (+ env 1)))
+			  (copy-old-env-start-label (label-generator "_copy_old_env_start_"))
+			  (copy-old-env-end-label (label-generator "_copy_old-env_end_"))
+			  (copy-args-start-label (label-generator "_copy_args_start_"))
+			  (copy-args-end-label (label-generator "_copy_args_end_")))
+
+			(string-append
+
+				"MOV(R1,FPARG(0)); //R1 holds address of old env\n"
+				"//allocate mem for new env\n"
+				"PUSH(IMM("(number->string (+ 1 env))"));\n"
+			    "CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(R2, R0); //R2 hols address of new env\n\n" 
+
+				"//copy old end pointers\n"
+				"MOV(R3,FPARG(1));\n"  ;may not be needed
+				"MOV(R4,IMM(0));\n"
+				"MOV(R5,IMM(1));\n"
+
+				copy-old-env-start-label ":\n"
+				"CMP(R4,IMM("(number->string (+ 1 env))"));\n"
+				"JUMP_EQ("copy-old-env-end-label");\n"
+				"MOV(INDD(R2,R5),INDD(R1,R4));\n"
+				"ADD(R4,IMM(1));\n"
+				"ADD(R5,IMM(1));\n" 
+				"JUMP("copy-old-env-start-label");\n"
+				copy-old-env-end-label":\n"
+
+				"//allocate mem for current env argument\n"
+	       		"PUSH(FPARG(1));\n"  ;;hold number of argument (for current env size)
+	       		"CALL(MALLOC);\n" 
+	       		"DROP(1);\n" 
+	       		"MOV(R3, R0);\n"     ;;R3 hold address for current env
+
+	       		"//copy argument from stack to allocated mem\n"
+	       		"MOV(R4,IMM(0));\n" 
+	       		copy-args-start-label ":\n"
+	       		"CMP(R4,FPARG(1));\n" 
+	       		"JUMP_EQ("copy-args-end-label");\n" 
+	       		"MOV(R5,R4);\n" 
+	       		"ADD(R5,IMM(2));\n" 
+	       		"MOV(INDD(R3,R4),FPARG(R5));\n" 
+	       		"ADD(R4,IMM(1));\n" 
+	       		"JUMP("copy-args-start-label");\n" 
+	       		copy-args-end-label ":\n"
+
+	       		"MOV(INDD(R2,0),R3); // Now R1 holds the environment\n" 
+
+	       		"PUSH(IMM(3));\n"
+	       		"CALL(MALLOC);\n" 
+	       		"DROP(1);\n" 
+
+	       		"MOV(INDD(R0,0), T_CLOSURE);\n" 
+	       		"MOV(INDD(R0,1), R1);\n" ;;put new env 
+	       		"MOV(INDD(R0,2), (long)&&" label-clos ");\n" ;;need to fix
