@@ -1,1 +1,3 @@
-(or 1 2 3 #f "abcd")
+(((lambda (x)
+	(lambda (y)
+		x)) 3) 10)
