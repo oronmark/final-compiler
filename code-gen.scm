@@ -2,6 +2,8 @@
 
 (load "compiler.scm")
 
+(define global-fvar-table '())
+
 (define compile-scheme-file
   (lambda (source target)
    (let* ((pe-lst (map (lambda (ex) (annotate-tc 
@@ -11,9 +13,15 @@
                                             (eliminate-nested-defines 
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
           (const-table (make-const-table pe-lst))
+          (free-var-table (make-fvar-table pe-lst const-table))
          (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
 
-       (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)                       
+   	  (set! global-fvar-table free-var-table)
+
+   	  (disp const-table)
+   	  (disp global-fvar-table)
+      (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target) 
+                    
   )
 ))      
   
@@ -69,6 +77,12 @@
 
 "/*-------------const table-------------*/\n\n"
 
+"/*-------------fvar table-------------*/\n\n"
+
+	(generate-fvar-in-mem global-fvar-table)
+
+"/*-------------fvar table-------------*/\n\n"
+  
 "/*-------------fake frame--------------*/\n\n"
 	"PUSH(IMM(0));\n"
 	"PUSH(IMM(T_NIL));\n"
@@ -165,6 +179,20 @@
 	)) 
 
 
+
+;----helpers for debug-----
+
+(define run
+  (lambda (expr)
+    (annotate-tc 
+      (pe->lex-pe 
+        (box-set 
+          (remove-applic-lambda-nil 
+            (eliminate-nested-defines(parse expr))))))))
+
+;-----helpers for debug----
+
+
 ;----expression for debuging-----
 (define lst1
  `(,(parse `(if 33 44)) ,(parse '(lambda (a) #\a #\g (+ 3 4) '(a b c (x y))))))
@@ -183,23 +211,12 @@
 
 (define lst6
 	`(,(parse -2/4)))
+
+(define lst7
+	`(,(run '(+ 2 3)) ,(run '(if x 1 2)) ,(run '(+ 1 2 y))   ))
 ;----expression for debuging-----
 
-;----helpers for debug-----
 
-(define run
-  (lambda (expr)
-    (annotate-tc 
-      (pe->lex-pe 
-        (box-set 
-          (remove-applic-lambda-nil 
-            (eliminate-nested-defines(parse expr))))))))
-
-(define try
-  (lambda (target)
-    (compile-scheme-file "program.scm" target)))
-
-;-----helpers for debug----
 
 (define flatten-const-list 
   (lambda (list)
@@ -233,6 +250,10 @@
 (define get-pvar-var
 	(lambda (pvar-expr)
 		(cadr pvar-expr)))
+
+(define get-fvar-var
+	(lambda (fvar-expr)
+		(cadr fvar-expr)))
 
 (define get-pvar-minor
 	(lambda (pvar-expr)
@@ -563,7 +584,7 @@
     (cond ((if-expr? pe) (code-gen-if pe c-table env))
           ((pvar-expr? pe) (code-gen-pvar pe c-table env))
           ((bvar-expr? pe) (code-gen-bvar pe c-table env))
-          ((fvar-expr? pe) "not yet implemented\n")
+          ((fvar-expr? pe) (code-gen-fvar pe c-table env))
           ((const-expr? pe) (code-gen-const pe c-table env))
           ((applic-expr? pe) (code-gen-applic pe c-table env))
           ((tc-applic-expr? pe) (code-gen-tc-applic pe c-table env))
@@ -572,10 +593,43 @@
           ((lambda-opt-expr? pe)(code-gen-lambda-opt pe c-table env))
           ((lambda-var-expr? pe) "not yet implemented\n")
           ((or-expr? pe) (code-gen-or pe c-table env))
-          ((define-expr? pe) "not yet implemented\n")
+          ((define-expr? pe) (code-gen-def pe c-table env))
           ((set-expr? pe) "not yet implemented\n")
           (else "error"))   
   ))
+
+(define code-gen-fvar
+	(lambda (pe c-table env)
+		(let ((address (get-fvar-address pe)))
+			"MOV(R0,IND(" address "));\n"
+			)))
+
+(define get-fvar-address
+	(lambda (fvar fvar-table)
+		(cond ((null? fvar-table) 2)
+		       ((equal? (caar fvar-table) (get-fvar-var fvar)) (cadar fvar-table))
+		       (else (get-fvar-address fvar (cdr fvar-table))))))
+
+
+
+(define code-gen-def
+	(lambda (pe c-table env)
+		(let* ((fvar (get-def-var pe))
+			  (fval (get-def-val pe))
+			  (address (get-fvar-address fvar global-fvar-table)))
+
+			(string-append
+				"////////////////////////////////\n" 
+			  	"///code gen: define   - start///\n"
+			  	"////////////////////////////////\n\n"
+
+			  	(code-gen fval c-table env)
+			  	"MOV(IND(" (number->string address) "),R0);\n"
+			  	"MOV(R0,SOB_VOID);\n\n"
+			  	))))
+
+
+
 
 (define code-gen-tc-applic
 	(lambda (applic-expr c-table env)
@@ -591,7 +645,7 @@
 		  	"\n\n"
 		  	"////////////////////////////////\n" 
 		  	"///code gen: tc-applic- start///\n"
-		  	"////////////////////////////////\n"
+		  	"////////////////////////////////\n\n"
 		  	args-code-gen
 		  	"\n"
 		  	"PUSH(IMM("(number->string arg-num)"))\n"
@@ -932,4 +986,82 @@
 
 
 
+(define find-fvar-in-pe
+	(lambda (pe)
+		(cond ((fvar-expr? pe) (get-fvar-var pe))
+			  ((if-expr? pe) `(,(find-fvar-in-pe (get-if-test pe)) ,(find-fvar-in-pe (get-if-dit pe)) 
+			  	             ,(find-fvar-in-pe (get-if-dif pe))))      
+	          ((applic-expr? pe) `(,(find-fvar-in-pe (get-applic-operator pe)) 
+	          	                ,@(map find-fvar-in-pe (get-applic-operands pe))))
+	          ((tc-applic-expr? pe) `(,(find-fvar-in-pe (get-applic-operator pe)) 
+	          	                   ,@(map find-fvar-in-pe (get-applic-operands pe))))
+	          ((seq-expr? pe) (map find-fvar-in-pe (get-seq-list pe)))
+	          ((lambda-simple-expr? pe) (find-fvar-in-pe (get-lambda-simple-body pe)))
+	          ((lambda-opt-expr? pe) (find-fvar-in-pe (get-lambda-opt-body pe)))
+	          ((lambda-var-expr? pe) (find-fvar-in-pe (get-lambda-var-body pe)))
+	          ((or-expr? pe) (map find-fvar-in-pe (get-or-body pe)))
+	          ((define-expr? pe) `(,(find-fvar-in-pe (get-def-var pe)) ,(find-fvar-in-pe (get-def-val pe))))
+	          ((set-expr? pe) `(,(find-fvar-in-pe (get-set-var pe)) ,(find-fvar-in-pe (get-set-val pe))))
+	          (else '()))
+	)) 
+
+
+
+(define flatten-fvar-list 
+  (lambda (list)
+	   (cond ((null? list) list)
+	         ((list? (car list)) (if (or (null? (car list)) (not (equal? (caar list) 'fvar)))
+                                        (append (flatten-fvar-list (car list)) (flatten-fvar-list (cdr list)))
+                                        (cons (car list) (flatten-fvar-list (cdr list)))))
+	         (else (cons (car list) (flatten-fvar-list (cdr list)))))))
+
+
+(define get-max-address-item
+	(lambda (c-table max-address-item)
+		(cond ((null? c-table) max-address-item)
+			  ((> (get-c-table-elem-address (car c-table)) (get-c-table-elem-address max-address-item))
+			  	    (get-max-address-item (cdr c-table) (car c-table)))
+			  (else (get-max-address-item (cdr c-table) max-address-item)))))
+
+(define get-next-adderess-after-max-const-item
+	(lambda (max-address-item)
+		(cond ((equal? get-c-table-elem-tag 'string) (+ 1 
+			                                            (car (get-c-table-string-rep max-address-item))
+			                                            (get-c-table-elem-address max-address-item)))
+			  ((equal? get-c-table-elem-tag 'vector) (+ 1 
+			                                            (car (get-c-table-vector-rep-rep max-address-item))
+			                                            (get-c-table-elem-address max-address-item)))
+			  (else (+ 4  (get-c-table-elem-address max-address-item))))))
+			  		    
+
+
+(define get-addres-after-c-table
+	(lambda (c-table)
+		(if (null? c-table)
+			7
+			(get-max-address-item c-table (car c-table)))))
+
+(define assign-fvar-address
+	(lambda (fvar-lst address)
+		(if (null? fvar-lst)
+			fvar-lst
+			(cons `(,(car fvar-lst) ,address) (assign-fvar-address (cdr fvar-lst) (+ 1 address)))))) ;; may need to be + 2
+
+(define make-fvar-table
+	(lambda (pe-lst c-table)
+		(let ((address (get-next-adderess-after-max-const-item (get-addres-after-c-table c-table)))
+			 (fvars (remove-double (flatten-fvar-list (map find-fvar-in-pe pe-lst)))))
+			(assign-fvar-address fvars address)
+
+			)))
+
+(define generate-fvar-in-mem
+	(lambda (fvar-table)
+		(if (null? fvar-table)
+			""
+			(let ((first (car fvar-table)))
+				(string-append
+					"PUSH(IMM(1));\n"
+					"CALL(MALLOC);\n"
+					"MOV(IND(R0),SOB_NIL);\n\n")))))
 
