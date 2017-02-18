@@ -17,9 +17,6 @@
          (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
 
    	  (set! global-fvar-table free-var-table)
-
-   	  (disp const-table)
-   	  (disp global-fvar-table)
       (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target) 
                     
   )
@@ -600,8 +597,8 @@
 
 (define code-gen-fvar
 	(lambda (pe c-table env)
-		(let ((address (get-fvar-address pe)))
-			"MOV(R0,IND(" address "));\n"
+		(let ((address (get-fvar-address pe global-fvar-table)))
+			(string-append "MOV(R0,IND(" (number->string address) "));\n")
 			)))
 
 (define get-fvar-address
