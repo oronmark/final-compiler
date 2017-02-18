@@ -566,7 +566,7 @@
           ((fvar-expr? pe) "not yet implemented\n")
           ((const-expr? pe) (code-gen-const pe c-table env))
           ((applic-expr? pe) (code-gen-applic pe c-table env))
-          ((tc-applic-expr? pe) "not yet implemented\n")
+          ((tc-applic-expr? pe) (code-gen-tc-applic pe c-table env))
           ((seq-expr? pe) (code-gen-seq pe c-table env))
           ((lambda-simple-expr? pe) (code-gen-lambda-simple pe c-table env))
           ((lambda-opt-expr? pe)(code-gen-lambda-opt pe c-table env))
@@ -576,6 +576,59 @@
           ((set-expr? pe) "not yet implemented\n")
           (else "error"))   
   ))
+
+(define code-gen-tc-applic
+	(lambda (applic-expr c-table env)
+		(let* ((proc (get-applic-operator applic-expr))
+	  		   (args (get-applic-operands applic-expr))
+	 	       (arg-num (length args))
+	  		   (args-code-gen-lst (map (lambda (ex) (string-append (code-gen ex c-table env) "\nPUSH(R0)\n")) args))
+	 		   (args-code-gen (apply string-append (reverse args-code-gen-lst)))
+	 		   (overide-stack-start-label (label-generator "_tc_applic_overide_stack_start_"))
+	 		   (overide-stack-end-label (label-generator "_tc_applic_overide_stack_end_")))
+
+		  (string-append
+		  	"\n\n"
+		  	"////////////////////////////////\n" 
+		  	"///code gen: tc-applic- start///\n"
+		  	"////////////////////////////////\n"
+		  	args-code-gen
+		  	"\n"
+		  	"PUSH(IMM("(number->string arg-num)"))\n"
+		  	(code-gen proc c-table env)  ;;R0 hold procedure address
+		  	"PUSH(INDD(R0,1));\n" ;; push env
+		  	"PUSH(FPARG(-1));\n"  ;; push old ret address (from previous call)
+		  	"MOV(R10,FPARG(-2));\n\n" ;; save old fp to R10
+		  	
+		  	"MOV(R1," (number->string arg-num) " + 3);\n" ;;number of items to copy to old frame
+		  	"MOV(R2, FPARG(1) + 1);\n" ;; offset from current fp to bottom of the stack
+		  	"MOV(R3,-3);\n\n"
+		  	
+		  	"MOV(R4,FPARG(1) + 4);\n" ;; size of old frame
+
+
+		  	overide-stack-start-label ":\n"
+		  		"CMP(R1,IMM(0));\n"
+		  		"JUMP_EQ(" overide-stack-end-label ");\n"
+		  			"MOV(FPARG(R2),FPARG(R3));\n"
+		  			"SUB(R2,IMM(1));\n"  ;; current stack location to overide
+		  			"SUB(R3,IMM(1));\n"  ;; current stack location to copy from
+		  			"SUB(R1,IMM(1));\n"  ;; number of items left to copy
+		  			"JUMP(" overide-stack-start-label ");\n"
+		  	overide-stack-end-label ":\n\n"
+
+		  	"DROP(R4);\n"
+		    "MOV(FP,R10);\n"
+		    "JUMPA(INDD(R0,2));\n"
+		    ))))
+
+
+
+
+
+ 
+
+
 
 (define label-generator
     (let ((n 0))

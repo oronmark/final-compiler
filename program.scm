@@ -1,3 +1,3 @@
-((lambda (a b . t)
-	t
-	) 1 2 3 4)
+((lambda (x)
+	((lambda (y)
+		y) 3)) 10)
