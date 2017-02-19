@@ -15,15 +15,14 @@
           (const-table  (make-const-table pe-lst))
           (free-var-table (make-fvar-table pe-lst const-table))
           (set-global-fvar-table  (set! global-fvar-table free-var-table))
-         (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
+          (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
 
-   	    ; (disp const-table)
+      	        ;(disp const-table)
    		;(disp global-fvar-table)
       (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)
-
   )
-))      
-  
+))
+
 
 
 (define string->sexpr
@@ -35,11 +34,9 @@
                (lambda(x) `(failed ,x)))
     ))
 
-
 (define prologue
    (lambda (c-table)
-
-(string-append
+   (string-append
    "
     #include <stdio.h>
     #include <stdlib.h>
@@ -106,13 +103,7 @@
 
 "/*-------------fake frame--------------*/\n\n"
 
-  
     )))
-
-
-
-
- 
 
 (define epilogue
 
@@ -130,14 +121,7 @@
 
     "return 0;\n"
     "}"
-
-
-    )
-)
-
-
-
-
+    ))
 
 (define string->file
   (lambda (str out-file)
@@ -155,9 +139,6 @@
       ))
 ))
 
-          
-          
-
 (define file->string
   (lambda (in-file)
     (let ((in-port (open-input-file in-file)))
@@ -171,7 +152,6 @@
                        (cons ch (run)))))))
         (list->string
           (run))))))
-
 
 (define find-consts-in-pe
 	(lambda (pe)
@@ -189,10 +169,9 @@
 	          ((or-expr? pe) (map find-consts-in-pe (get-or-body pe)))
 	          ((define-expr? pe) `(,(find-consts-in-pe (get-def-var pe)) ,(find-consts-in-pe (get-def-val pe))))
 	          ((set-expr? pe) `(,(find-consts-in-pe (get-set-var pe)) ,(find-consts-in-pe (get-set-val pe))))
-	          (else '()))
+	          ((box-set? pe) (find-consts-in-pe (get-box-set-val pe)))
+                  (else '()))
 	)) 
-
-
 
 ;----helpers for debug-----
 
@@ -205,7 +184,6 @@
             (eliminate-nested-defines(parse expr))))))))
 
 ;-----helpers for debug----
-
 
 ;----expression for debuging-----
 (define lst1
@@ -229,8 +207,6 @@
 (define lst7
 	`(,(run '(+ 2 3)) ,(run '(if x 1 2)) ,(run '(+ 1 2 y))   ))
 ;----expression for debuging-----
-
-
 
 (define flatten-const-list 
   (lambda (list)
@@ -260,6 +236,10 @@
            (else (cons (car c-lst) (remove-double (cdr c-lst)))))))
 
 ;-------- getters for const table element --------
+
+(define get-box-set-val
+  (lambda (box-set-expr)
+    (caddr box-set-expr)))
 
 (define get-pvar-var
 	(lambda (pvar-expr)
@@ -309,6 +289,21 @@
 (define get-c-table-elem-address
   (lambda (expr)
     (cadr expr)))
+
+
+(define box-get?
+  (lambda (expr)
+    (equal? (car expr) 'box-get)
+    ))
+(define box-set?
+  (lambda (expr)
+    (equal? (car expr) 'box-set)
+    ))
+
+(define box?
+  (lambda (expr)
+    (equal? (car expr) 'box)
+    ))
 ;-------- getters for const table element --------
 
 ;;pushes the argument for MAKE_SOB_STRING to stack
@@ -416,7 +411,6 @@
 
 
 ))
-        
 
 (define break-vector
 	(lambda (const-expr)
@@ -424,7 +418,6 @@
 			   (vec-list (vector->list const-val)))
 		    `(,const-expr ,@(map (lambda (ex) (find-all-sub-consts-in-const-expr `(const ,ex))) vec-list)))
 		))
-
 
 (define break-pair
 	(lambda (const-expr)
@@ -449,8 +442,7 @@
 			      (else const-expr))
 			)
 		))
-		      
-
+		
 
 (define find-sub-consts
   (lambda (c-table)
@@ -472,7 +464,6 @@
                (equal? (car const-list) `(const #t))
                (equal? (car const-list) `(const #f))) (remove-bool-void-nil (cdr const-list)))
           (else (cons (car const-list) (remove-bool-void-nil (cdr const-list)))))))
-
 
 (define is-subset-in-list
 	(lambda (sub set)
@@ -608,9 +599,59 @@
           ((lambda-var-expr? pe) "not yet implemented\n")
           ((or-expr? pe) (code-gen-or pe c-table env))
           ((define-expr? pe) (code-gen-def pe c-table env))
-          ((set-expr? pe) "not yet implemented\n")
-          (else "error"))   
+          ((set-expr? pe) (code-gen-set pe c-table env))
+          ((box-get? pe) (code-gen-box-get pe c-table env))
+          ((box-set? pe) (code-gen-box-set pe c-table env))
+          ((box? pe) (code-gen-box pe c-table env))
+          (else "error"))
   ))
+
+(define code-gen-set
+  (lambda (pe c-table env)
+       (let* ((pvar-expr (cadr pe))
+              (minor (caddr pvar-expr))
+              (set-dest (caddr pe)))
+          (string-append 
+          (code-gen set-dest c-table env) ; now R0 holds the value of the dest
+				"MOV(FPARG("(number->string (+ 2 minor))"),R0);\n"
+                                "MOV(R0,IMM(SOB_VOID));\n\n"
+                                )
+    )))
+
+(define code-gen-box
+  (lambda (pe c-table env)
+       (let* ((pvar-expr (cadr pe))
+              (minor (caddr pvar-expr)))
+                (string-append 
+                   "PUSH(IMM(1));\n"                                     ; allocate word for "box"
+                   "CALL(MALLOC);\n"                                     ; now pointer to word is in R0
+                   "DROP(1);\n"
+                   "MOV(IND(R0), FPARG("(number->string (+ 2 minor))"));\n" ; write the param in proper place
+                   "MOV(FPARG("(number->string (+ 2 minor))"), R0);\n"   ; write on top of the parameter the address of "box"
+                   "MOV(R0,IMM(SOB_VOID));\n\n"
+                   )
+                )))
+
+(define code-gen-box-set
+  (lambda (pe c-table env)
+       (let ((boxed-var (cadr pe))
+             (set-dest (caddr pe)))
+          (string-append
+            (code-gen boxed-var c-table env)
+            "MOV(R1,R0);\n"                 ; R1 will now hold the value of the pointer to be set
+            (code-gen set-dest c-table env) ; now R0 holds the value of the dest
+            "MOV(IND(R1),R0);\n"
+            "MOV(R0,SOB_VOID);\n\n"
+            ))
+    ))
+
+(define code-gen-box-get
+	(lambda (pe c-table env)
+		(let ((boxed-var (cadr pe)))
+                          (string-append 
+                          (code-gen boxed-var c-table env) ; after this R0 holds the pointer of the object.
+                                "MOV(R0,IND(R0));\n\n"))
+                  ))
 
 (define code-gen-fvar
 	(lambda (pe c-table env)
@@ -625,8 +666,6 @@
 		(cond ((null? fvar-table) 2)
 		       ((equal? (caar fvar-table) (get-fvar-var fvar)) (cadar fvar-table))
 		       (else (get-fvar-address fvar (cdr fvar-table))))))
-
-
 
 (define code-gen-def
 	(lambda (pe c-table env)
@@ -649,9 +688,6 @@
 
 
 	
-
-
-
 
 (define code-gen-tc-applic
 	(lambda (applic-expr c-table env)
@@ -682,7 +718,6 @@
 		  	
 		  	"MOV(R4,FPARG(1) + 4);\n" ;; size of old frame
 
-
 		  	overide-stack-start-label ":\n"
 		  		"CMP(R1,IMM(0));\n"
 		  		"JUMP_EQ(" overide-stack-end-label ");\n"
@@ -698,14 +733,6 @@
 		    "JUMPA(INDD(R0,2));\n"
 		    ))))
 
-
-
-
-
- 
-
-
-
 (define label-generator
     (let ((n 0))
       (lambda (type)
@@ -713,13 +740,11 @@
         (string-append "L" type (number->string n)))
       ))
 
-
 (define code-gen-const
   (lambda (const-pe c-table env)
     (let ((const-val (get-const-val const-pe)))
       (string-append "MOV(R0,IMM("(number->string (get-const-address c-table const-val)) "));\n"))
     ))
-                    
 
 (define code-gen-if
   (lambda (if-pe c-table env)
@@ -772,7 +797,7 @@
 						(string-append
 							"\n\n"
 		  		            "/////////////////////////////\n" 
-		  	                "///code gen: or    - start///\n"
+		  	                "///code gen: or    - start///\n" 
 		     	            "/////////////////////////////\n"
 		     	
 							(code-gen (car args) c-table env)
@@ -780,7 +805,6 @@
 							"JUMP_NE("exit-label");\n"
 							(run-or (cdr args)))))))
 			(string-append "MOV(R0,IMM(SOB_FALSE));\n" (run-or (get-or-body or-pe)) exit-label ":\n"))))
-
 
 (define code-gen-lambda-opt
 	(lambda (lambda-pe c-table env)
@@ -840,9 +864,9 @@
 
             "MOV(IND(R2), R3);\n\n" ; pointer to new environment (list of majors)
 
-           "PUSH(IMM(3));\n"
-           "CALL(MALLOC);\n" 
-           "DROP(1);\n\n" 
+           "push(imm(3));\n"
+           "call(malloc);\n" 
+           "drop(1);\n\n" 
 
            "MOV(INDD(R0,0), T_CLOSURE);\n" 
            "MOV(INDD(R0,1), R2);\n"
@@ -882,8 +906,6 @@
            exit-label ":\n\n"
 
 ))))
-
-
 
 (define code-gen-lambda-simple
 	(lambda (lambda-pe c-table env)
@@ -957,10 +979,7 @@
 	           "RETURN;\n\n"
 
            exit-label ":\n\n"
-
 ))))
-
-
 
 (define code-gen-applic
 	(lambda (applic-expr c-table env)
@@ -1003,12 +1022,6 @@
 		  	"MOV(R0,INDD(R0,"(number->string minor)"))\n"
 		  	))))
 
-
-
-
-
-
-
 (define find-fvar-in-pe
 	(lambda (pe)
 		(cond ((fvar-expr? pe) (get-fvar-var pe))
@@ -1027,8 +1040,6 @@
 	          ((set-expr? pe) `(,(find-fvar-in-pe (get-set-var pe)) ,(find-fvar-in-pe (get-set-val pe))))
 	          (else '()))
 	)) 
-
-
 
 (define flatten-fvar-list 
   (lambda (list)
@@ -1435,10 +1446,6 @@
 				"MOV(INDD(R0,2),LABEL(L_my_string_body));\n" 
 				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
 
-
-
-
-
 (define my-symbol?
 	(lambda ()
 		(let ((address (get-fvar-address '(fvar symbol?) global-fvar-table)))
@@ -1470,11 +1477,5 @@
 				"MOV(INDD(R0,1),IMM(0));\n" 
 				"MOV(INDD(R0,2),LABEL(L_my_symbol_body));\n" 
 				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
-
-
-
-
-
-
 
 
