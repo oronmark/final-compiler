@@ -1,4 +1,2 @@
-(define x 4)
-((lambda (y)
-	x) 10)
- 
+(define foo '())
+(null? foo)

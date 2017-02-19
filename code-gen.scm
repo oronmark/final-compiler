@@ -12,13 +12,15 @@
                                           (remove-applic-lambda-nil 
                                             (eliminate-nested-defines 
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
-          (const-table (make-const-table pe-lst))
+          (const-table  (make-const-table pe-lst))
           (free-var-table (make-fvar-table pe-lst const-table))
+          (set-global-fvar-table  (set! global-fvar-table free-var-table))
          (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
 
-   	  (set! global-fvar-table free-var-table)
-      (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target) 
-                    
+   	    ; (disp const-table)
+   		;(disp global-fvar-table)
+      (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)
+
   )
 ))      
   
@@ -75,10 +77,23 @@
 "/*-------------const table-------------*/\n\n"
 
 "/*-------------fvar table-------------*/\n\n"
-
+	
+	"MOV(IND(0)," (number->string next-address-after-const-table) ");\n\n"
 	(generate-fvar-in-mem global-fvar-table)
 
 "/*-------------fvar table-------------*/\n\n"
+
+"/*-------------runtime-support-------------*/\n\n"
+	(my-car)
+	(my-cdr)
+	(my-integer?)
+	(my-char?)
+	(my-pair?)
+	(my-procedure?)
+	(my-boolean?)
+	(my-rational?)
+	(my-null?)
+"/*-------------runtime-support-------------*/\n\n"
   
 "/*-------------fake frame--------------*/\n\n"
 	"PUSH(IMM(0));\n"
@@ -603,6 +618,8 @@
 
 (define get-fvar-address
 	(lambda (fvar fvar-table)
+		;(disp fvar)
+		;(disp fvar-table)
 		(cond ((null? fvar-table) 2)
 		       ((equal? (caar fvar-table) (get-fvar-var fvar)) (cadar fvar-table))
 		       (else (get-fvar-address fvar (cdr fvar-table))))))
@@ -611,19 +628,25 @@
 
 (define code-gen-def
 	(lambda (pe c-table env)
+		;(disp pe)
 		(let* ((fvar (get-def-var pe))
 			  (fval (get-def-val pe))
 			  (address (get-fvar-address fvar global-fvar-table)))
+			(if (eq? address 2)
+				"define: fvar is not in global-fvar-table"
+				(string-append
+					"////////////////////////////////\n" 
+				  	"///code gen: define   - start///\n"
+				  	"////////////////////////////////\n\n"
 
-			(string-append
-				"////////////////////////////////\n" 
-			  	"///code gen: define   - start///\n"
-			  	"////////////////////////////////\n\n"
+				  	(code-gen fval c-table env)
+				  	"MOV(IND(" (number->string address) "),R0);\n"
+				  	"MOV(R0,SOB_VOID);\n\n")))))
+					  	
 
-			  	(code-gen fval c-table env)
-			  	"MOV(IND(" (number->string address) "),R0);\n"
-			  	"MOV(R0,SOB_VOID);\n\n"
-			  	))))
+
+
+	
 
 
 
@@ -862,6 +885,7 @@
 
 (define code-gen-lambda-simple
 	(lambda (lambda-pe c-table env)
+		;(disp lambda-pe)
 		(let ((body-code (code-gen (get-lambda-simple-body lambda-pe) c-table (+ env 1)))
 			  (body-label (label-generator "_lambda_simple_body_"))
 			  (copy-old-env-start-label (label-generator "_copy_old_env_start_"))
@@ -1015,6 +1039,7 @@
 
 (define get-max-address-item
 	(lambda (c-table max-address-item)
+		;(disp "get max item")
 		(cond ((null? c-table) max-address-item)
 			  ((> (get-c-table-elem-address (car c-table)) (get-c-table-elem-address max-address-item))
 			  	    (get-max-address-item (cdr c-table) (car c-table)))
@@ -1022,43 +1047,364 @@
 
 (define get-next-adderess-after-max-const-item
 	(lambda (max-address-item)
-		(cond ((equal? get-c-table-elem-tag 'string) (+ 1 
-			                                            (car (get-c-table-string-rep max-address-item))
-			                                            (get-c-table-elem-address max-address-item)))
-			  ((equal? get-c-table-elem-tag 'vector) (+ 1 
-			                                            (car (get-c-table-vector-rep-rep max-address-item))
-			                                            (get-c-table-elem-address max-address-item)))
-			  (else (+ 4  (get-c-table-elem-address max-address-item))))))
+		(if max-address-item
+			(cond ((equal? get-c-table-elem-tag 'string) (+ 1 
+				                                            (car (get-c-table-string-rep max-address-item))
+				                                            (get-c-table-elem-address max-address-item)))
+				  ((equal? get-c-table-elem-tag 'vector) (+ 1 
+				                                            (car (get-c-table-vector-rep-rep max-address-item))
+				                                            (get-c-table-elem-address max-address-item)))
+				  (else (+ 4  (get-c-table-elem-address max-address-item))))
+				  7)))
 			  		    
 
 
 (define get-addres-after-c-table
 	(lambda (c-table)
 		(if (null? c-table)
-			7
+			#f
 			(get-max-address-item c-table (car c-table)))))
 
 (define assign-fvar-address
 	(lambda (fvar-lst address)
+		;(disp "assign")
 		(if (null? fvar-lst)
 			fvar-lst
 			(cons `(,(car fvar-lst) ,address) (assign-fvar-address (cdr fvar-lst) (+ 1 address)))))) ;; may need to be + 2
 
+
+; (define runtime-support-functions
+; 	'(append apply < = > + / * - char->integer  cons denominator 
+; 	  eq? integer->char list  make-string make-vector map not 
+; 	  number? numerator  rational? remainder set-car! set-cdr! string-length
+; 	  string-ref string-set! string->symbol string? symbol? symbol->string vector vector-length
+; 	  vector-ref vector-set! vector? zero?))
+
+
+(define next-address-after-const-table 0)
+
+(define runtime-support-functions
+	'(car cdr integer? char? pair? procedure? boolean? rational? null?))
+
+(define unify-fvar-w-runtime-support
+	(lambda (fvar-lst runtime-lst)
+		;(disp "unify")
+		(cond ((and (null? fvar-lst) (null? runtime-lst)) fvar-lst)
+			   ((null? fvar-lst) (cons (car runtime-lst) (unify-fvar-w-runtime-support fvar-lst (cdr runtime-lst))))
+			   (else  (cons (car fvar-lst) (unify-fvar-w-runtime-support (cdr fvar-lst) runtime-lst))))))
+
+
 (define make-fvar-table
 	(lambda (pe-lst c-table)
-		(let ((address (get-next-adderess-after-max-const-item (get-addres-after-c-table c-table)))
-			 (fvars (remove-double (flatten-fvar-list (map find-fvar-in-pe pe-lst)))))
-			(assign-fvar-address fvars address)
+
+		(let* ((address (get-next-adderess-after-max-const-item (get-addres-after-c-table c-table)))
+			  (fvars (remove-double (flatten-fvar-list (map find-fvar-in-pe pe-lst))))
+			  (fvars-w-runtime-support (remove-double(unify-fvar-w-runtime-support fvars runtime-support-functions))))
+
+		  (set! next-address-after-const-table address)
+		  (assign-fvar-address fvars-w-runtime-support address)
 
 			)))
 
 (define generate-fvar-in-mem
 	(lambda (fvar-table)
+
 		(if (null? fvar-table)
 			""
 			(let ((first (car fvar-table)))
+
 				(string-append
+					"//fvar: " (symbol->string (car first)) "\n"
 					"PUSH(IMM(1));\n"
 					"CALL(MALLOC);\n"
-					"MOV(IND(R0),SOB_NIL);\n\n")))))
+					"MOV(IND(R0),SOB_NIL);\n\n"
+					(generate-fvar-in-mem (cdr fvar-table))"\n")))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; runtime support ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(define my-car
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar car) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_car_clos);\n" 
+			"L_my_car_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,1));\n" 
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_car_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_car_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+(define my-cdr
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar cdr) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_cdr_clos);\n" 
+			"L_my_cdr_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,2));\n" 
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_cdr_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_cdr_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+(define my-integer?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar integer?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_integer_clos);\n" 
+			"L_my_integer_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_INTEGER);\n"
+					"JUMP_EQ(L_is_integer_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_integer);\n\n"
+				
+				"L_is_integer_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_integer:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_integer_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_integer_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+(define my-char?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar char?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_char_clos);\n" 
+			"L_my_char_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_CHAR);\n"
+					"JUMP_EQ(L_is_char_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_char);\n\n"
+				
+				"L_is_char_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_char:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_char_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_char_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+(define my-pair?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar pair?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_pair_clos);\n" 
+			"L_my_pair_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_PAIR);\n"
+					"JUMP_EQ(L_is_pair_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_pair);\n\n"
+				
+				"L_is_pair_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_pair:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_pair_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_pair_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+(define my-procedure?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar procedure?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_procedure_clos);\n" 
+			"L_my_procedure_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_CLOSURE);\n"
+					"JUMP_EQ(L_is_procedure_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_procedure);\n\n"
+				
+				"L_is_procedure_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_procedure:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_procedure_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_procedure_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+(define my-boolean?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar boolean?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_boolean_clos);\n" 
+			"L_my_boolean_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_BOOL);\n"
+					"JUMP_EQ(L_is_boolean_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_boolean);\n\n"
+				
+				"L_is_boolean_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_boolean:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_boolean_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_boolean_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+(define my-rational?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar rational?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_rational_clos);\n" 
+			"L_my_rational_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_FRACTION);\n"
+					"JUMP_EQ(L_is_rational_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_rational);\n\n"
+				
+				"L_is_rational_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_rational:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_rational_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_rational_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+(define my-null?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar null?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_null_clos);\n" 
+			"L_my_null_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_NIL);\n"
+					"JUMP_EQ(L_is_null_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_null);\n\n"
+				
+				"L_is_null_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_null:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_null_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_null_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+
+
+
+
+
+
 
