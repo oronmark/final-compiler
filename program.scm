@@ -1,2 +1,2 @@
-(define foo '())
-(null? foo)
+(define foo 'abc)
+(symbol? foo)

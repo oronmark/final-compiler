@@ -93,6 +93,8 @@
 	(my-boolean?)
 	(my-rational?)
 	(my-null?)
+	(my-string?)
+	(my-symbol?)
 "/*-------------runtime-support-------------*/\n\n"
   
 "/*-------------fake frame--------------*/\n\n"
@@ -1072,19 +1074,19 @@
 			fvar-lst
 			(cons `(,(car fvar-lst) ,address) (assign-fvar-address (cdr fvar-lst) (+ 1 address)))))) ;; may need to be + 2
 
+(define next-address-after-const-table 0)
+
 
 ; (define runtime-support-functions
 ; 	'(append apply < = > + / * - char->integer  cons denominator 
 ; 	  eq? integer->char list  make-string make-vector map not 
-; 	  number? numerator  rational? remainder set-car! set-cdr! string-length
-; 	  string-ref string-set! string->symbol string? symbol? symbol->string vector vector-length
+; 	  number? numerator remainder set-car! set-cdr! string-length
+; 	  string-ref string-set! string->symbol symbol->string vector vector-length
 ; 	  vector-ref vector-set! vector? zero?))
 
 
-(define next-address-after-const-table 0)
-
 (define runtime-support-functions
-	'(car cdr integer? char? pair? procedure? boolean? rational? null?))
+	'(car cdr integer? char? pair? procedure? boolean? rational? null? string? symbol?))
 
 (define unify-fvar-w-runtime-support
 	(lambda (fvar-lst runtime-lst)
@@ -1400,6 +1402,74 @@
 				"MOV(INDD(R0,2),LABEL(L_my_null_body));\n" 
 				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
 
+
+(define my-string?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar string?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_string_clos);\n" 
+			"L_my_string_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_STRING);\n"
+					"JUMP_EQ(L_is_string_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_string);\n\n"
+				
+				"L_is_string_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_string:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_string_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_string_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
+
+
+
+(define my-symbol?
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar symbol?) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_symbol_clos);\n" 
+			"L_my_symbol_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R0,FPARG(2));\n" 
+				"MOV(R0,INDD(R0,0));\n\n" 
+				
+				"CMP(R0,T_SYMBOL);\n"
+					"JUMP_EQ(L_is_symbol_true);\n"
+				"MOV(R0,SOB_FALSE);\n"
+				"JUMP(L_exit_my_symbol);\n\n"
+				
+				"L_is_symbol_true:\n"
+					"MOV(R0,SOB_TRUE);\n\n"
+
+				"L_exit_my_symbol:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+			"L_create_my_symbol_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_symbol_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
 
 
 
