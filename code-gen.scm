@@ -3,6 +3,8 @@
 (load "compiler.scm")
 
 (define global-fvar-table '())
+(define init-symbol-table '())
+
 
 (define compile-scheme-file
   (lambda (source target)
@@ -14,15 +16,27 @@
                                               (parse ex))))))) (string->sexpr (string->list (file->string source)))))
           (const-table  (make-const-table pe-lst))
           (free-var-table (make-fvar-table pe-lst const-table))
-          (set-global-fvar-table  (set! global-fvar-table free-var-table))
+          (set-global-fvar-table-execute  (set! global-fvar-table free-var-table))
+          (set-symbol-table-address-execute (set-symbol-table-address))
+          (set-init-symbol-table (set! init-symbol-table (symbol-rep-string-lst const-table)))
           (code-gen-lst (map (lambda (ex) (code-gen ex const-table -1)) pe-lst)))
 
-      	        ;(disp const-table)
+   		;(disp const-table)
+   		;(disp init-symbol-table)
+      	       
    		;(disp global-fvar-table)
       (string->file (string-append (prologue const-table) (apply string-append code-gen-lst) epilogue) target)
   )
 ))
 
+(define symbol-rep-string-lst
+	(lambda (c-table)
+		(if (null? c-table)
+			c-table
+			(let ((first (car c-table)))
+				 (if (equal? (car first) 'symbol)
+				 	 (cons (get-c-table-symbol-rep first) (symbol-rep-string-lst (cdr c-table)))
+				 	 (symbol-rep-string-lst (cdr c-table))))))) 
 
 
 (define string->sexpr
@@ -80,6 +94,22 @@
 
 "/*-------------fvar table-------------*/\n\n"
 
+"/*-------------symbol table-------------*/\n\n"
+	;;M[0] should be equal to symbol-table-address
+	
+	"MOV(R1," (number->string symbol-table-address)  ");\n"  ;;this line is for debugging purposes
+	"PUSH(IMM(1));\n"
+	"CALL(MALLOC);\n"
+	"MOV(IND(R0),SOB_NIL);\n"
+	"DROP(1);\n\n"
+	;(set-symbol-table-address) ;; we set the address after using it because the computation order for the string-append is 
+							   ;; from last to first arg.
+    
+   (generate-symbol-table-in-mem init-symbol-table)
+
+
+"/*-------------symbol table-------------*/\n\n"
+
 "/*-------------runtime-support-------------*/\n\n"
 	(my-car)
 	(my-cdr)
@@ -92,6 +122,7 @@
 	(my-null?)
 	(my-string?)
 	(my-symbol?)
+  (my-string-to-symbol)
 "/*-------------runtime-support-------------*/\n\n"
   
 "/*-------------fake frame--------------*/\n\n"
@@ -104,6 +135,9 @@
 "/*-------------fake frame--------------*/\n\n"
 
     )))
+
+
+
 
 (define epilogue
 
@@ -1061,10 +1095,10 @@
 (define get-next-adderess-after-max-const-item
 	(lambda (max-address-item)
 		(if max-address-item
-			(cond ((equal? get-c-table-elem-tag 'string) (+ 1 
+			(cond ((equal? (get-c-table-elem-tag max-address-item) 'string) (+ 3 
 				                                            (car (get-c-table-string-rep max-address-item))
 				                                            (get-c-table-elem-address max-address-item)))
-				  ((equal? get-c-table-elem-tag 'vector) (+ 1 
+				  ((equal? (get-c-table-elem-tag max-address-item) 'vector) (+ 3 
 				                                            (car (get-c-table-vector-rep-rep max-address-item))
 				                                            (get-c-table-elem-address max-address-item)))
 				  (else (+ 4  (get-c-table-elem-address max-address-item))))
@@ -1083,21 +1117,36 @@
 		;(disp "assign")
 		(if (null? fvar-lst)
 			fvar-lst
-			(cons `(,(car fvar-lst) ,address) (assign-fvar-address (cdr fvar-lst) (+ 1 address)))))) ;; may need to be + 2
+			(cons `(,(car fvar-lst) ,address) (assign-fvar-address (cdr fvar-lst) (+ 1 address))))))
 
 (define next-address-after-const-table 0)
+(define symbol-table-address 0)
 
+(define get-last-address-from-fvar-table
+	(lambda (fvar-table max)
+		; (disp fvar-table)
+		; (disp max)
+		(cond ((null? fvar-table) max)
+				((> (cadr (car fvar-table)) max) (get-last-address-from-fvar-table (cdr fvar-table) (cadr (car fvar-table))))
+				(else  (get-last-address-from-fvar-table (cdr fvar-table) max)))))
+
+
+(define set-symbol-table-address
+	(lambda ()
+		(set! symbol-table-address   
+				(+ (get-last-address-from-fvar-table global-fvar-table next-address-after-const-table) 1))
+		""))
 
 ; (define runtime-support-functions
 ; 	'(append apply < = > + / * - char->integer  cons denominator 
 ; 	  eq? integer->char list  make-string make-vector map not 
 ; 	  number? numerator remainder set-car! set-cdr! string-length
-; 	  string-ref string-set! string->symbol symbol->string vector vector-length
+; 	  string-ref string-set! symbol->string vector vector-length
 ; 	  vector-ref vector-set! vector? zero?))
 
 
 (define runtime-support-functions
-	'(car cdr integer? char? pair? procedure? boolean? rational? null? string? symbol?))
+	'(car cdr integer? char? pair? procedure? boolean? rational? null? string? symbol? string->symbol))
 
 (define unify-fvar-w-runtime-support
 	(lambda (fvar-lst runtime-lst)
@@ -1114,10 +1163,42 @@
 			  (fvars (remove-double (flatten-fvar-list (map find-fvar-in-pe pe-lst))))
 			  (fvars-w-runtime-support (remove-double(unify-fvar-w-runtime-support fvars runtime-support-functions))))
 
+            (disp (get-next-adderess-after-max-const-item (get-addres-after-c-table c-table)))
 		  (set! next-address-after-const-table address)
 		  (assign-fvar-address fvars-w-runtime-support address)
 
 			)))
+
+
+(define generate-symbol-table-in-mem
+	(lambda (rep-string-table)
+		;(disp rep-string-table)
+		(if (null? rep-string-table)
+			""
+			(letrec ((run (lambda (rep-table)
+								(if (null? (cdr rep-table))
+									(string-append
+										"PUSH(IMM(2));\n"
+										"CALL(MALLOC);\n"
+										"MOV(INDD(R0,0),"(number->string (car rep-table))");\n"
+										"MOV(INDD(R0,1),SOB_NIL);\n"
+										"DROP(IMM(2));\n\n")
+
+									(string-append
+										"PUSH(IMM(2));\n"
+										"CALL(MALLOC);\n"
+										"MOV(INDD(R0,0),"(number->string (car rep-table))");\n"
+										"MOV(INDD(R0,1),R0 + 2);\n"
+										"DROP(IMM(2));\n\n"
+										(run (cdr rep-table)))))))
+
+				(string-append 
+
+					;;place address of first link of symbol table in "symbol-table-address"
+					"MOV(IND("(number->string symbol-table-address)"),"(number->string symbol-table-address)"  + 1  );\n"  
+					(run rep-string-table))))))
+
+
 
 (define generate-fvar-in-mem
 	(lambda (fvar-table)
@@ -1130,7 +1211,8 @@
 					"//fvar: " (symbol->string (car first)) "\n"
 					"PUSH(IMM(1));\n"
 					"CALL(MALLOC);\n"
-					"MOV(IND(R0),SOB_NIL);\n\n"
+					"MOV(IND(R0),SOB_NIL);\n"
+					"DROP(1);\n\n"
 					(generate-fvar-in-mem (cdr fvar-table))"\n")))))
 
 
@@ -1477,5 +1559,88 @@
 				"MOV(INDD(R0,1),IMM(0));\n" 
 				"MOV(INDD(R0,2),LABEL(L_my_symbol_body));\n" 
 				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+				
+				
+
+(define my-string-to-symbol
+	(lambda ()
+		(let ((address (get-fvar-address '(fvar string->symbol) global-fvar-table)))
+		(string-append
+			"JUMP(L_create_my_string_to_symbol_clos);\n" 
+			"L_my_string_to_symbol_body:\n" 
+				"PUSH(FP);\n" 
+				"MOV(FP, SP);\n" 
+				"MOV(R3,FPARG(2));\n\n" ;; R3 holds the address of the string
+
+				"MOV(R1," (number->string symbol-table-address) ");\n" ;; R1 holds the address of the first link 
+				"CMP(IND(R1),SOB_NIL);\n"
+				"JUMP_EQ(L_my_string_to_symbol_table_nil);\n\n"
+
+					;;in case symbol table is not nil
+
+					;;search for string in table
+					"L_my_string_to_symbol_search_loop:\n"
+					"CMP(R1,SOB_NIL);\n"
+					"JUMP_EQ(L_my_symbol_to_string_not_found);\n"
+						"CMP(IND(R1),R3);\n"
+						"JUMP_EQ(L_my_symbol_to_string_found);\n"
+							"MOV(R4,R1);\n"  ;; R4 holds the previous link , at the end R4 will point to the last link
+							"MOV(R1,INDD(R1,1));\n"  ;;go to next link
+							"JUMP(L_my_string_to_symbol_search_loop);\n\n"
+
+
+
+;----------------------------------------------------------------------------
+				"L_my_symbol_to_string_found:\n"
+					"PUSH(R3);\n"
+					"CALL(MAKE_SOB_SYMBOL);\n"
+					"DROP(IMM(1));\n"					
+					"JUMP(L_exit_my_string_to_symbol);\n"
+;----------------------------------------------------------------------------
+
+				"L_my_symbol_to_string_not_found:\n"
+					"PUSH(IMM(2));\n"
+					"CALL(MALLOC);\n"
+					"DROP(IMM(1));\n"
+					"MOV(INDD(R0,0), R3);\n"
+					"MOV(INDD(R0,1), SOB_NIL);\n"
+					"MOV(INDD(R4,1), R0);\n"
+                	"JUMP(L_exit_my_string_to_symbol);\n"            
+
+;----------------------------------------------------------------------------
+
+	                           
+				"L_my_string_to_symbol_table_nil:\n"
+					;;add string to symbol table
+					"PUSH(IMM(2));\n"
+					"CALL(MALLOC);\n"
+					"DROP(IMM(1));\n"
+					"MOV(INDD(R0,0),R3);\n"
+					"MOV(INDD(R0,1),SOB_NIL);\n"
+					"MOV(IND(R1),R0);\n\n"
+
+					;;create symbol 
+					"PUSH(R3);\n"
+					"CALL(MAKE_SOB_SYMBOL);\n"
+					"DROP(IMM(1));\n"
+
+
+				"L_exit_my_string_to_symbol:\n"
+				"POP(FP);\n" 
+				"RETURN;\n\n" 
+
+
+
+			"L_create_my_string_to_symbol_clos:\n" 
+				"PUSH(3);\n" 
+				"CALL(MALLOC);\n" 
+				"DROP(1);\n" 
+				"MOV(INDD(R0,0),IMM(T_CLOSURE));\n" 
+				"MOV(INDD(R0,1),IMM(0));\n" 
+				"MOV(INDD(R0,2),LABEL(L_my_string_to_symbol_body));\n" 
+				"MOV(IND(" (number->string address) "),R0);\n\n" ))))
+
+
 
 

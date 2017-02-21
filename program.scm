@@ -1,1 +1,2 @@
-(lambda (x) ((lambda () x) (lambda () (set! x 3))))
+(define x "abc")
+(string->symbol "abc")
